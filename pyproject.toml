@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "easywave-rx-module"
+version = "1.0.0"
+description = "Pure Python RxModule protocol implementation for EASYWAVE RX11 USB transceivers"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "ELDAT EaS GmbH", email = "info@eldat.de"},
+]
+keywords = ["easywave", "rx11", "transceiver", "usb", "serial"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Communications",
+    "Topic :: Home Automation",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.0.275",
+    "mypy>=1.0",
+    "tox>=4.0",
+    "build>=0.10",
+    "twine>=4.0",
+]
+
+[project.urls]
+Repository = "https://github.com/home-assistant/core/tree/dev/homeassistant/components/easywave"
+Documentation = "https://www.home-assistant.io/integrations/easywave"
+Issues = "https://github.com/home-assistant/core/issues"
+
+[tool.setuptools]
+packages = ["easywave_rx_module"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pylint.messages_control]
+disable = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+check_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true

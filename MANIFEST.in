@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include easywave_rx_module *.py
