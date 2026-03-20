@@ -155,7 +155,7 @@ class AsyncDeviceFactory:
             # ['RX11', 'RX21', 'RX22', 'RX25', 'RX09', ...]
             ```
         """
-        return DeviceRegistry.get_supported_devices()
+        return DeviceRegistry.list()
 
     @staticmethod
     def get_device_variants(device_id: str) -> list[str]:
