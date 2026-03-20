@@ -126,25 +126,25 @@ class AsyncRX11Device(AsyncRxModuleDevice):
     """EASYWAVE RX11 USB Transceiver."""
 
     DEVICE_TYPE = "RX11"
-    DEFAULT_BAUDRATE = 38400
+    DEFAULT_BAUDRATE = 115200
 
 
 class AsyncRX21Device(AsyncRxModuleDevice):
-    """EASYWAVE RX21 Serial Module (9600 bps)."""
+    """EASYWAVE RX21 Serial Module (115200 bps)."""
 
     DEVICE_TYPE = "RX21"
-    DEFAULT_BAUDRATE = 9600
+    DEFAULT_BAUDRATE = 115200
 
 
 class AsyncRX22Device(AsyncRxModuleDevice):
-    """EASYWAVE RX22 Serial Module (9600 bps enhanced)."""
+    """EASYWAVE RX22 Serial Module (115200 bps enhanced)."""
 
     DEVICE_TYPE = "RX22"
-    DEFAULT_BAUDRATE = 9600
+    DEFAULT_BAUDRATE = 115200
 
 
 class AsyncRX25Device(AsyncRxModuleDevice):
-    """EASYWAVE RX25 Serial Module (38400 bps high-speed)."""
+    """EASYWAVE RX25 Serial Module (115200 bps high-speed)."""
 
     DEVICE_TYPE = "RX25"
-    DEFAULT_BAUDRATE = 38400
+    DEFAULT_BAUDRATE = 115200
