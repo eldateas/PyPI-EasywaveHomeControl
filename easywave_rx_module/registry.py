@@ -80,6 +80,18 @@ class DeviceRegistry:
         return cls._REGISTRY.get(device_id.upper())
 
     @classmethod
+    def get_device_class(cls, device_id: str) -> type[BaseProtocol] | None:
+        """Alias for get() - used by async_registry for consistency.
+
+        Args:
+            device_id: Device identifier (e.g., "RX11-EW")
+
+        Returns:
+            Device class or None if not registered
+        """
+        return cls.get(device_id)
+
+    @classmethod
     def list(cls) -> list[str]:
         """List all registered device IDs.
 

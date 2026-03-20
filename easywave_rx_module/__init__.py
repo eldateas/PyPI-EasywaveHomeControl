@@ -54,6 +54,10 @@ from __future__ import annotations
 # Main API: DeviceFactory for creating devices
 from .registry import DeviceFactory, DeviceRegistry
 
+# Async API (PRIMARY for Home Assistant integration)
+from .async_registry import AsyncDeviceFactory
+from .async_devices import AsyncDeviceBase, AsyncRxModuleDevice, AsyncRX09Device
+
 # Protocol families (new structure)
 from .protocols.base import BaseProtocol
 from .protocols.rx11_rx2x import (
