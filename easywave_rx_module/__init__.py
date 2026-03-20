@@ -1,60 +1,68 @@
 """EASYWAVE RX Module Hardware Communication Library.
 
-Pure Python implementation for communicating with EASYWAVE radio modules
-including RX11 USB transceivers and RX21/RX22/RX25 direct serial modules.
+Pure async implementation for communicating with EASYWAVE radio modules.
+Primary API designed for Home Assistant integration.
 
-With support for multiple protocol families (RxModule, RX09, etc.) and
-functional variants (ew, dev, basic, pro).
-
-Device Families & Types:
-    RxModule Family:
-        - RX11: USB-based transceiver (38400 bps)
-        - RX21: Direct serial module (9600 bps)
-        - RX22: Direct serial module (9600 bps, enhanced)
-        - RX25: Direct serial module (38400 bps, high-speed)
+Async-First Architecture:
+    All devices use pure asyncio - no blocking calls on event loop.
     
-    RX09 Family:  (Template for future devices with different protocols)
-        - RX09: Different protocol, different functions
+Device Families:
+    RxModule (Binary Protocol):
+        - RX11: USB Transceiver (38400 bps)
+        - RX21: Serial Module (9600 bps)
+        - RX22: Serial Module (9600 bps, enhanced)
+        - RX25: Serial Module (38400 bps, high-speed)
+    
+    RX09 (ASCII Protocol):
+        - RX09: Basic Receiver (57600 bps, Easywave Basic only)
 
-Functional Variants (for RxModule family):
-    - basic: Essential functions only
-    - ew: EasyWave consumer functions
-    - dev: All available functions
-
-Quick Start:
-    >>> from easywave_rx_module import DeviceFactory
+Quick Start (Home Assistant):
+    >>> from easywave_rx_module import AsyncDeviceFactory
     >>>
-    >>> # Create device with variant
-    >>> rx11 = DeviceFactory.create("RX11-EW", port="/dev/ttyUSB0")
-    >>>
-    >>> # Check available functions
-    >>> available = rx11.get_available_functions()
-    >>>
-    >>> # Use protocol
-    >>> rx11.ping_request()
-    >>> device_info = rx11.query_hw_version_request()
-
-Architecture:
-    BaseProtocol (interface)
-        ├── RxModule Family (protocols/rx11_rx2x/)
-        │   ├── RX11Device (USB, 38400 bps)
-        │   ├── RX21Device (Serial, 9600 bps)
-        │   ├── RX22Device (Serial, 9600 bps enhanced)
-        │   └── RX25Device (Serial, 38400 bps)
-        │
-        └── RX09 Family (protocols/rx09/) [TEMPLATE]
-            └── RX09Device (Different protocol)
-
-Device creation is via DeviceFactory using string identifiers.
-Each device can operate in different variants controlling available API.
+    >>> device = await AsyncDeviceFactory.create("RX22", port="/dev/ttyAMA0")
+    >>> info = await device.get_device_info()
+    >>> success = await device.ping_request()
+    >>> functions = await device.get_available_functions()
+    >>> await device.disconnect()
 """
 
 from __future__ import annotations
 
-# Main API: DeviceFactory for creating devices
-from .registry import DeviceFactory, DeviceRegistry
+# ============================================================================
+# PRIMARY API: Async Factory (Home Assistant)
+# ============================================================================
 
-# Protocol families (new structure)
+from .async_registry import AsyncDeviceFactory
+
+# ============================================================================
+# ASYNC BASE PROTOCOL (Interface)
+# ============================================================================
+
+from .protocols.async_base import AsyncBaseProtocol
+
+# ============================================================================
+# ASYNC PROTOCOL IMPLEMENTATIONS
+# ============================================================================
+
+# RxModule family (binary protocol)
+from .protocols.rx11_rx2x import (
+    AsyncRX11Device,
+    AsyncRX21Device,
+    AsyncRX22Device,
+    AsyncRX25Device,
+    AsyncRxModuleDevice,
+    AsyncRxModule,
+)
+
+# RX09 family (ASCII protocol)
+from .protocols.rx09 import AsyncRX09Device, AsyncRX09Protocol
+
+# ============================================================================
+# LEGACY: Sync API (deprecated, for backward compatibility only)
+# Will be removed in next major version
+# ============================================================================
+
+from .registry import DeviceFactory, DeviceRegistry
 from .protocols.base import BaseProtocol
 from .protocols.rx11_rx2x import (
     RX11Device,
@@ -65,39 +73,30 @@ from .protocols.rx11_rx2x import (
 )
 from .protocols.rx09 import RX09Device
 
-# Protocol constants and utilities from protocols
-from .protocols.rx11_rx2x.protocol import (
-    CANCEL_ALL_IO,
-    CANCEL_IO,
-    CONTINUOUS_RCV_FUNCTIONS,
-    EOP,
-    EW_RCV_BUTTON,
-    EW_SEND_CMD,
-    MA_QUERY_FW_VER,
-    MA_QUERY_HW_VER,
-    PING_RCV,
-    PREFIX,
-    SOP,
-    STUFFING_ADDEND,
-    STUFFING_MAX,
-    STUFFING_MIN,
-    ErrorCode,
-    FunctionCode,
-    ICP,
-    IRP,
-    Request,
-    RxModule,
-    apply_byte_stuffing,
-    decode_packet,
-    encode_irp,
-    encode_serial_array,
-    encode_uint16,
-    encode_uint32,
-    parse_icp_data,
-    remove_byte_stuffing,
-)
-
-__version__ = "2.0.0"
+__version__ = "3.0.0-async"
+__all__ = [
+    # Primary async API
+    "AsyncDeviceFactory",
+    "AsyncBaseProtocol",
+    "AsyncRxModuleDevice",
+    "AsyncRX11Device",
+    "AsyncRX21Device",
+    "AsyncRX22Device",
+    "AsyncRX25Device",
+    "AsyncRxModule",
+    "AsyncRX09Device",
+    "AsyncRX09Protocol",
+    # Legacy sync API (deprecated)
+    "DeviceFactory",
+    "DeviceRegistry",
+    "BaseProtocol",
+    "RxModuleDevice",
+    "RX11Device",
+    "RX21Device",
+    "RX22Device",
+    "RX25Device",
+    "RX09Device",
+]
 
 __all__ = [
     # Main API: Device Factory (recommended)
