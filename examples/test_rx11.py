@@ -8,8 +8,8 @@ This example demonstrates:
 - Error handling
 """
 
-import sys
 import logging
+import sys
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -19,17 +19,16 @@ from easywave_rx_module.registry import DeviceFactory
 
 # Setup logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 _LOGGER = logging.getLogger(__name__)
 
 
 def test_rx11() -> None:
     """Test RX11 device with EW variant."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("🧪 RX11 Test Device (RxModule Family - USB Transceiver)")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     try:
         # Create RX11-EW device
@@ -47,25 +46,27 @@ def test_rx11() -> None:
         # Get available functions
         print("📋 Available Functions (RxModule - 25 functions):")
         functions = device.get_available_functions()
-        
+
         # Group functions by module
-        ew_funcs = [k for k in functions.keys() if k.startswith('ew_')]
-        ewb_funcs = [k for k in functions.keys() if k.startswith('ewb_')]
-        sec_funcs = [k for k in functions.keys() if k.startswith('sec_')]
-        sys_funcs = [k for k in functions.keys() if k in ['ping', 'query_hw_version', 'query_fw_version']]
-        
+        ew_funcs = [k for k in functions.keys() if k.startswith("ew_")]
+        ewb_funcs = [k for k in functions.keys() if k.startswith("ewb_")]
+        sec_funcs = [k for k in functions.keys() if k.startswith("sec_")]
+        sys_funcs = [
+            k for k in functions.keys() if k in ["ping", "query_hw_version", "query_fw_version"]
+        ]
+
         print(f"   System Functions ({len(sys_funcs)}):")
         for func in sorted(sys_funcs):
             print(f"      • {func}")
-        
+
         print(f"\n   EasyWave Basic Functions ({len(ew_funcs)}):")
         for func in sorted(ew_funcs):
             print(f"      • {func}")
-        
+
         print(f"\n   EasyWave Bidi Functions ({len(ewb_funcs)}):")
         for func in sorted(ewb_funcs):
             print(f"      • {func}")
-        
+
         print(f"\n   Secwave Functions ({len(sec_funcs)}):")
         for func in sorted(sec_funcs):
             print(f"      • {func}")
@@ -78,15 +79,15 @@ def test_rx11() -> None:
         try:
             result = device.ping_request(timeout=5.0)
             if result:
-                print(f"✓ Device ping successful")
+                print("✓ Device ping successful")
             else:
-                print(f"⚠️  Device ping timeout (device not connected)")
+                print("⚠️  Device ping timeout (device not connected)")
         except Exception as e:
             print(f"⚠️  Device not connected: {e}")
 
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("✓ RX11 Test Device ready for testing")
-        print("="*80 + "\n")
+        print("=" * 80 + "\n")
 
     except ValueError as e:
         print(f"❌ Error: {e}")

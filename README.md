@@ -67,8 +67,8 @@ asyncio.run(main())
 |--------|------|-----------|----------|----------|
 | **RX11** | USB Transceiver | 25 | EW, Bidi, Secwave | 115200 |
 | **RX21** | Serial Module | 25 | EW, Bidi, Secwave | 115200 |
-| **RX22** | Serial Enhanced | 25 | EW, Bidi, Secwave | 115200 |
-| **RX25** | Serial High-Speed | 25 | EW, Bidi, Secwave | 115200 |
+| **RX22** | Serial Module | 25 | EW, Bidi, Secwave | 115200 |
+| **RX25** | Serial Module | 25 | EW, Bidi, Secwave | 115200 |
 
 ### RX09 Family (ASCII Protocol, 57600 baud)
 

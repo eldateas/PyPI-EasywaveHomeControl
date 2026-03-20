@@ -1,54 +1,78 @@
 #!/usr/bin/env python3
-"""Simple example of using the easywave-rx-module library."""
+"""Simple async example of using the easywave-rx-module library.
 
-from easywave_rx_module import RxModule, ErrorCode
+This example demonstrates the basic async API:
+- Creating a device with AsyncDeviceFactory
+- Querying device information
+- Testing device connectivity
+- Proper cleanup with disconnect()
+"""
+
+import asyncio
+
+from easywave_rx_module import AsyncDeviceFactory, ErrorCode
 
 
-def main():
-    """Main example function."""
-    # Create module instance
-    rx = RxModule(port="/dev/ttyACM0")
+async def main():
+    """Main async example."""
+    device = None
+    try:
+        # Create module instance - connects automatically!
+        print("🔌 Connecting to RX22 device...")
+        device = await AsyncDeviceFactory.create(
+            "RX22", port="/dev/ttyUSB0", timeout=5.0  # or /dev/ttyAMA0 for Raspberry Pi
+        )
+        print("✓ Connected\n")
 
-    # Set disconnect callback
-    def on_disconnect():
-        print("Device disconnected!")
+        # Get device info
+        print("📋 Device Status:")
+        print(f"  Connected: {device.is_connected}")
+        print(f"  Status: {device.connection_status}\n")
 
-    rx.set_disconnect_callback(on_disconnect)
+        # Query hardware version
+        print("🔍 Hardware Information:")
+        result, hw_ver = await device.query_hw_version(timeout=5.0)
+        if result == ErrorCode.SUCCESS:
+            print(f"  Hardware: {hw_ver.hex()}")
+        else:
+            print(f"  Hardware query failed: {result}")
 
-    # Connect to device
-    if not rx.connect():
-        print(f"Failed to connect: {rx.last_error}")
-        return
+        # Query firmware version
+        result, major, minor, incomplete = await device.query_fw_version(timeout=5.0)
+        if result == ErrorCode.SUCCESS:
+            incomplete_str = " (incomplete)" if incomplete else ""
+            print(f"  Firmware: {major}.{minor}{incomplete_str}")
+        else:
+            print(f"  Firmware query failed: {result}")
 
-    print(f"Connected: {rx.is_connected}")
-    print(f"Status: {rx.connection_status}")
+        # Get device info (status, etc.)
+        info = await device.get_device_info()
+        print("\n📊 Device Info:")
+        for key, value in info.items():
+            print(f"  {key}: {value}")
 
-    # Query hardware version
-    result, hw_ver = rx.query_hw_version(timeout=5.0)
-    if result == ErrorCode.SUCCESS:
-        print(f"Hardware version: {hw_ver.hex()}")
-    else:
-        print(f"Hardware query failed: {result}")
+        # Get available functions
+        functions = await device.get_available_functions()
+        print(f"\n📡 Available Functions ({len(functions)}):")
+        for i, name in enumerate(list(functions.keys())[:5], 1):
+            print(f"  {i}. {name}")
+        if len(functions) > 5:
+            print(f"  ... and {len(functions) - 5} more")
 
-    # Query firmware version
-    result, major, minor, incomplete = rx.query_fw_version(timeout=5.0)
-    if result == ErrorCode.SUCCESS:
-        incomplete_str = " (incomplete)" if incomplete else ""
-        print(f"Firmware version: {major}.{minor}{incomplete_str}")
-    else:
-        print(f"Firmware query failed: {result}")
+        # Test connectivity
+        print("\n🔗 Device Connectivity:")
+        connected = await device.ping_request(timeout=3.0)
+        print(f"  Ping response: {'✓ OK' if connected else '✗ Timeout'}")
 
-    # Ping device
-    result = rx.ping(duration=5)
-    if result == ErrorCode.SUCCESS:
-        print("Ping successful")
-    else:
-        print(f"Ping failed: {result}")
-
-    # Cleanup
-    rx.dispose()
-    print("Disconnected")
+    except Exception as e:
+        print(f"❌ Error: {e}")
+    finally:
+        # Always disconnect!
+        if device:
+            print("\n🔌 Disconnecting...")
+            await device.disconnect()
+            print("✓ Disconnected")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

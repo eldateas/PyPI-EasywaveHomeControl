@@ -15,17 +15,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from easywave_rx_module import AsyncDeviceFactory
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 _LOGGER = logging.getLogger(__name__)
 
 
 async def main():
     """Demonstrate async device usage."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🏠 ASYNC API - Home Assistant Compatible")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     device = None
     try:
@@ -33,9 +32,7 @@ async def main():
         # Note: AsyncDeviceFactory.create() calls connect() internally!
         print("📱 Creating RX22 device (with auto-connect)...")
         device = await AsyncDeviceFactory.create(
-            "RX22",
-            port="/dev/ttyUSB0",  # or "/dev/ttyAMA0" for Raspberry Pi
-            timeout=5.0
+            "RX22", port="/dev/ttyUSB0", timeout=5.0  # or "/dev/ttyAMA0" for Raspberry Pi
         )
         print("✓ Device created and connected\n")
 
@@ -65,9 +62,9 @@ async def main():
             error, version = await device.query_fw_version()
             print(f"   Firmware: {version if error == 0 else 'N/A'}")
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("✅ Async API Example Complete")
-        print("="*70 + "\n")
+        print("=" * 70 + "\n")
 
     except Exception as e:
         _LOGGER.error("Error: %s", e)

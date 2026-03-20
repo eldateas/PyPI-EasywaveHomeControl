@@ -3,10 +3,10 @@
 This package contains protocol implementations for different device families:
 
 1. RxModule Family (rxmodule/):
-   - RX11: USB Transceiver (38400 bps)
-   - RX21: Serial Module (9600 bps)
-   - RX22: Serial Module (9600 bps, enhanced)
-   - RX25: Serial Module (38400 bps)
+   - RX11: USB Transceiver (115200 bps)
+   - RX21: Serial Module (115200 bps)
+   - RX22: Serial Module (115200 bps)
+   - RX25: Serial Module (115200 bps)
    - Variants: ew, dev, basic, pro
 
 2. RX09 Family (rx09/):

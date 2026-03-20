@@ -6,17 +6,16 @@ No ThreadPoolExecutor wrapper - direct asyncio implementation.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Literal
 
-from .protocols.async_base import AsyncBaseProtocol
-from .protocols.rx09 import AsyncRX09Device
+from .protocols.base import BaseProtocol
+from .protocols.rx09 import RX09Device
 from .protocols.rx11_rx2x import (
-    AsyncRX11Device,
-    AsyncRX21Device,
-    AsyncRX22Device,
-    AsyncRX25Device,
+    RX11Device,
+    RX21Device,
+    RX22Device,
+    RX25Device,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,17 +43,17 @@ ASYNC_DEVICE_ID = Literal[
 ]
 
 # Device registry
-_DEVICE_REGISTRY: dict[str, type[AsyncBaseProtocol]] = {
+_DEVICE_REGISTRY: dict[str, type[BaseProtocol]] = {
     # RX11
-    "RX11": AsyncRX11Device,
+    "RX11": RX11Device,
     # RX21
-    "RX21": AsyncRX21Device,
+    "RX21": RX21Device,
     # RX22
-    "RX22": AsyncRX22Device,
+    "RX22": RX22Device,
     # RX25
-    "RX25": AsyncRX25Device,
+    "RX25": RX25Device,
     # RX09
-    "RX09": AsyncRX09Device,
+    "RX09": RX09Device,
 }
 
 
@@ -87,7 +86,7 @@ class AsyncDeviceFactory:
         port: str,
         timeout: float = 5.0,
         variant: str | None = None,
-    ) -> AsyncBaseProtocol:
+    ) -> BaseProtocol:
         """Create an async device instance.
 
         Args:
@@ -197,6 +196,8 @@ class AsyncDeviceFactory:
             base_type = device_id_upper
 
         # Find all variants for this base type
-        variants = {k.split("-")[1] for k in _DEVICE_REGISTRY.keys() if k.startswith(base_type + "-")}
+        variants = {
+            k.split("-")[1] for k in _DEVICE_REGISTRY.keys() if k.startswith(base_type + "-")
+        }
 
         return sorted(variants)

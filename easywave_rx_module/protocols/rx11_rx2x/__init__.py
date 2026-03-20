@@ -1,27 +1,16 @@
-"""RxModule protocol family.
+"""RxModule protocol family (Pure Async).
 
-Provides implementations for RxModule protocol devices.
+Provides async implementations for RxModule protocol devices.
 
 Device Types:
-    RX11: USB Transceiver (38400 bps)
-    RX21: Serial Module (9600 bps)
-    RX22: Serial Module (9600 bps, enhanced)
-    RX25: Serial Module (38400 bps, high-speed)
+    RX11: USB Transceiver (115200 bps)
+    RX21: Serial Module (115200 bps)
+    RX22: Serial Module (115200 bps)
+    RX25: Serial Module (115200 bps)
 """
 
-# Sync devices (legacy, will be removed)
+# Pure async devices
 from .devices import RX11Device, RX21Device, RX22Device, RX25Device, RxModuleDevice
-
-# Async devices (primary API for Home Assistant)
-from .async_devices import (
-    AsyncRX11Device,
-    AsyncRX21Device,
-    AsyncRX22Device,
-    AsyncRX25Device,
-    AsyncRxModuleDevice,
-)
-from .async_protocol import AsyncRxModule
-
 from .protocol import (
     CANCEL_ALL_IO,
     CANCEL_IO,
@@ -29,17 +18,17 @@ from .protocol import (
     EOP,
     EW_RCV_BUTTON,
     EW_SEND_CMD,
-    ErrorCode,
-    FunctionCode,
     ICP,
     IRP,
     PREFIX,
-    Request,
-    RxModule,
     SOP,
     STUFFING_ADDEND,
     STUFFING_MAX,
     STUFFING_MIN,
+    ErrorCode,
+    FunctionCode,
+    Request,
+    RxModule,
     apply_byte_stuffing,
     decode_packet,
     encode_irp,

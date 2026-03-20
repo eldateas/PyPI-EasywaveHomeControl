@@ -61,9 +61,7 @@ class DeviceRegistry:
             TypeError: If device_class is not a BaseProtocol subclass
         """
         if not issubclass(device_class, BaseProtocol):
-            raise TypeError(
-                f"device_class must be a BaseProtocol subclass, got {device_class}"
-            )
+            raise TypeError(f"device_class must be a BaseProtocol subclass, got {device_class}")
 
         cls._REGISTRY[device_id.upper()] = device_class
 
@@ -186,10 +184,7 @@ class DeviceFactory:
 
         if device_class is None:
             supported = DeviceRegistry.list()
-            raise ValueError(
-                f"Unknown device ID: {device_id}. "
-                f"Supported types: {supported}"
-            )
+            raise ValueError(f"Unknown device ID: {device_id}. " f"Supported types: {supported}")
 
         # Create device instance with variant
         device = device_class(port=port, timeout=timeout, variant=variant, **kwargs)

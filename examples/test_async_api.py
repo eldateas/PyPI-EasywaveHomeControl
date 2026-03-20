@@ -2,7 +2,7 @@
 """Quick test of async API (Home Assistant compatible).
 
 This demonstrates the PRIMARY API for Home Assistant integration:
-- Async/await syntax throughout  
+- Async/await syntax throughout
 - Non-blocking device operations
 - Proper error handling and timeouts
 - Both RxModule (RX11/RX21/RX22/RX25) and RX09 support
@@ -19,27 +19,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from easywave_rx_module import AsyncDeviceFactory
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 _LOGGER = logging.getLogger(__name__)
 
 
 async def test_rx22_async():
     """Test RX22 with async API."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🏠 Async API Test (Home Assistant Pattern)")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     try:
         # Create RX22 device asynchronously
         # ✅ NON-BLOCKING - doesn't freeze event loop!
         print("📱 Creating RX22 device asynchronously...")
-        device = await AsyncDeviceFactory.create(
-            "RX22",
-            port="/dev/ttyUSB0",
-            timeout=5.0
-        )
+        device = await AsyncDeviceFactory.create("RX22", port="/dev/ttyUSB0", timeout=5.0)
         print("✓ Device created\n")
 
         # Get device info asynchronously
@@ -98,17 +93,13 @@ async def test_rx22_async():
 
 async def test_rx09_async():
     """Test RX09 with async API."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🏠 RX09 Async API Test (ASCII Protocol)")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     try:
         print("📱 Creating RX09 device asynchronously...")
-        device = await AsyncDeviceFactory.create(
-            "RX09",
-            port="/dev/ttyUSB1",
-            timeout=5.0
-        )
+        device = await AsyncDeviceFactory.create("RX09", port="/dev/ttyUSB1", timeout=5.0)
         print("✓ Device created\n")
 
         # RX09-specific async methods
@@ -140,9 +131,9 @@ async def test_rx09_async():
 
 async def test_multiple_devices():
     """Show how to manage multiple devices in HA."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🏠 Multiple Device Management (HA Pattern)")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     print("Creating multiple devices concurrently...")
     print("Same event loop, no blocking! ✨\n")
@@ -164,8 +155,7 @@ async def test_multiple_devices():
         print("Pinging all devices simultaneously...")
         if all(not isinstance(d, Exception) for d in devices):
             ping_tasks = [
-                d.ping_request(timeout=2.0) for d in devices
-                if not isinstance(d, Exception)
+                d.ping_request(timeout=2.0) for d in devices if not isinstance(d, Exception)
             ]
             results = await asyncio.gather(*ping_tasks, return_exceptions=True)
             print(f"Results: {results}\n")
@@ -185,9 +175,9 @@ async def main():
     await test_rx09_async()
     await test_multiple_devices()
 
-    print("="*70)
+    print("=" * 70)
     print("✅ Async API tests complete!")
-    print("="*70)
+    print("=" * 70)
     print("\n💡 Key Points:")
     print("   ✓ All operations are non-blocking")
     print("   ✓ Safe with Home Assistant event loop")

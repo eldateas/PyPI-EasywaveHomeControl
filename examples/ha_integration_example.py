@@ -73,18 +73,12 @@ class EasywaveCoordinator:
             True if device initialized successfully, False otherwise
         """
         try:
-            _LOGGER.info(
-                "Setting up EASYWAVE device: %s on port %s",
-                self.device_id,
-                self.port
-            )
+            _LOGGER.info("Setting up EASYWAVE device: %s on port %s", self.device_id, self.port)
 
             # Create async device instance
             # ✅ This is NON-BLOCKING!
             self._device = await AsyncDeviceFactory.create(
-                self.device_id,
-                port=self.port,
-                timeout=self.timeout
+                self.device_id, port=self.port, timeout=self.timeout
             )
 
             # Get device info
@@ -99,9 +93,7 @@ class EasywaveCoordinator:
             self._available = True
 
             # Start periodic health check
-            self._health_check_task = asyncio.create_task(
-                self._health_check_loop()
-            )
+            self._health_check_task = asyncio.create_task(self._health_check_loop())
 
             _LOGGER.info("EASYWAVE device setup complete")
             return True
@@ -183,18 +175,12 @@ class EasywaveCoordinator:
         try:
             # For RxModule devices (RX11, RX22, etc.)
             if hasattr(self._device, "ew_send_cmd_request"):
-                result, data = await self._device.ew_send_cmd_request(
-                    gateway_id,
-                    button
-                )
+                result, data = await self._device.ew_send_cmd_request(gateway_id, button)
                 return result == 0  # Success if error code 0
 
             # For RX09 device
             elif hasattr(self._device, "send_telegramm"):
-                result, response = await self._device.send_telegramm(
-                    gateway_id,
-                    str(button)
-                )
+                result, response = await self._device.send_telegramm(gateway_id, str(button))
                 return result == 0
 
         except asyncio.TimeoutError:
@@ -225,7 +211,7 @@ async def main_example():
         hass_name="home-assistant",
         device_id="RX22",  # Or RX11, RX09, etc.
         port="/dev/ttyAMA0",  # Raspberry Pi serial port
-        timeout=5.0
+        timeout=5.0,
     )
 
     # Setup device
@@ -245,10 +231,7 @@ async def main_example():
 
         # Simulate command sending
         print("\n🔄 Sending test commands...")
-        success = await coordinator.async_send_command(
-            gateway_id=123456,
-            button=0
-        )
+        success = await coordinator.async_send_command(gateway_id=123456, button=0)
         print(f"   Command result: {'✓ Success' if success else '✗ Failed'}")
 
         # Keep running for a bit to show health checks
@@ -257,7 +240,7 @@ async def main_example():
 
         await asyncio.sleep(2.0)
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("✅ Coordinator example complete (teardown now)")
 
     finally:
@@ -269,13 +252,12 @@ async def main_example():
 if __name__ == "__main__":
     # Setup logging
     logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("🏠 Home Assistant Integration Pattern Example")
-    print("="*60)
+    print("=" * 60)
 
     # Run example (requires real device on port)
     # For testing, it will fail on device access, but shows the pattern

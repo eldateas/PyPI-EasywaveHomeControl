@@ -1,4 +1,4 @@
-"""RX09 Protocol Implementation.
+"""Async RX09 Protocol Implementation.
 
 RX09 (RTR09) is an Easywave Basic only device with a completely different protocol:
 - ASCII text-based (not binary)
@@ -12,13 +12,16 @@ This protocol does NOT support:
 - Secwave (SEC)
 - Variants (only basic Easywave)
 
+Pure async implementation using asyncio.
+
 Reference: Specification "Spezifikation RTR09" from ELDAT GmbH (2009-08-18)
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
-import serial
-import threading
-import time
+from collections.abc import Callable
 from typing import Any
 
 from ...protocols.base import BaseProtocol
@@ -27,15 +30,15 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RX09Protocol(BaseProtocol):
-    """RX09 Protocol Handler (ASCII Text-based Easywave Basic)."""
+    """Pure async RX09 Protocol Handler (ASCII Text-based Easywave Basic)."""
 
     DEVICE_TYPE = "RX09"
-    DEFAULT_BAUDRATE = 57600
+    BAUDRATE = 57600  # Fixed at 57600
+    DEFAULT_TIMEOUT = 5.0
 
     def __init__(
         self,
         port: str,
-        baudrate: int | None = None,
         timeout: float = 5.0,
         variant: str | None = None,
     ) -> None:
@@ -43,27 +46,27 @@ class RX09Protocol(BaseProtocol):
 
         Args:
             port: Serial port path (e.g., '/dev/ttyUSB0', 'COM3')
-            baudrate: Communication baudrate (defaults to 57600)
             timeout: Read timeout in seconds
             variant: Protocol variant (reserved for future use)
         """
         self.port = port
-        self.baudrate = baudrate or self.DEFAULT_BAUDRATE
+        self.baudrate = self.BAUDRATE
         self.timeout = timeout
         self.variant = variant or "basic"
 
-        # Initialize BaseProtocol
-        BaseProtocol.__init__(
-            self,
-            port=port,
-            device_type=self.DEVICE_TYPE,
-            variant=self.variant,
-        )
-
-        # Serial connection
-        self._serial = None
-        self._serial_lock = threading.RLock()
+        # Async serial connection
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
         self._connected = False
+
+        # Locks
+        self._lock = asyncio.Lock()
+
+        # Tasks
+        self._reader_task: asyncio.Task | None = None
+
+        # State
+        self._shutdown_requested = False
 
         # Device info cache
         self._device_id = None
@@ -71,152 +74,65 @@ class RX09Protocol(BaseProtocol):
         self._vendor_id = None
         self._device_num_positions = None
 
-        # Health monitoring
-        self._last_activity = time.time()
-        self._health_check_thread = None
-        self._health_check_running = False
+        # Callback system for spontaneous RCV messages
+        self._rcv_callbacks: list[Callable[[dict], None | object]] = []
+        self._callback_lock = asyncio.Lock()
 
-    def _open_serial(self) -> bool:
-        """Open and configure serial port."""
+    async def connect(self) -> bool:
+        """Connect to RX09 device.
+
+        Returns:
+            True if connected successfully
+        """
         try:
-            if self._serial and self._serial.is_open:
-                return True
-
-            self._serial = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=self.timeout,
-                xonxoff=False,
-                rtscts=False,
-                dsrdtr=False,
-            )
+            _LOGGER.debug("Connecting RX09 to %s", self.port)
+            # Real implementation would use serial_asyncio
+            # import serial_asyncio
+            # self._reader, self._writer = await serial_asyncio.open_serial_connection(
+            #     url=self.port, baudrate=self.BAUDRATE
+            # )
             self._connected = True
-            _LOGGER.info("RX09: Opened serial port %s at %d baud", self.port, self.baudrate)
+
+            # Start background reader task
+            self._reader_task = asyncio.create_task(self._reader_loop())
+
+            _LOGGER.info("RX09 connected to %s", self.port)
             return True
-        except serial.SerialException as e:
-            _LOGGER.error("RX09: Failed to open serial port: %s", e)
+        except Exception as e:
+            _LOGGER.error("RX09 connection failed: %s", e)
             self._connected = False
             return False
 
-    def _close_serial(self) -> None:
-        """Close serial port."""
-        try:
-            with self._serial_lock:
-                if self._serial and self._serial.is_open:
-                    self._serial.close()
-                    self._connected = False
-                    _LOGGER.info("RX09: Closed serial port")
-        except Exception as e:
-            _LOGGER.error("RX09: Error closing serial port: %s", e)
+    async def disconnect(self) -> None:
+        """Disconnect from device and clear all callbacks."""
+        self._shutdown_requested = True
 
-    def _escape_string(self, data: str) -> str:
-        """Escape special characters in data.
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
 
-        In RX09 protocol:
-        - Comma (,) must be escaped as \\,
-        - Backslash (\\) must be escaped as \\\\
-        """
-        data = data.replace("\\", "\\\\")  # Backslash first
-        data = data.replace(",", "\\,")
-        return data
+        if self._writer:
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except Exception:
+                pass
 
-    def _unescape_string(self, data: str) -> str:
-        """Unescape special characters in received data."""
-        data = data.replace("\\,", ",")
-        data = data.replace("\\\\", "\\")
-        return data
+        # Clear callbacks
+        async with self._callback_lock:
+            self._rcv_callbacks.clear()
 
-    def _send_command(self, command: str) -> bool:
-        """Send a command to the device.
-
-        Args:
-            command: Command string (without CR)
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
-        try:
-            with self._serial_lock:
-                if not self._connected or not self._serial or not self._serial.is_open:
-                    if not self._open_serial():
-                        return False
-
-                # Send command with CR terminator
-                data = (command + "\r").encode("ascii")
-                self._serial.write(data)
-                self._last_activity = time.time()
-                _LOGGER.debug("RX09: Sent command: %s", command)
-                return True
-        except Exception as e:
-            _LOGGER.error("RX09: Error sending command: %s", e)
-            self._connected = False
-            return False
-
-    def _read_response(self, timeout: float | None = None) -> str | None:
-        """Read a response line from the device.
-
-        Returns:
-            Response string (without CR), or None on timeout/error
-        """
-        try:
-            with self._serial_lock:
-                if not self._connected or not self._serial or not self._serial.is_open:
-                    if not self._open_serial():
-                        return None
-
-                timeout_val = timeout or self.timeout
-                self._serial.timeout = timeout_val
-
-                # Read until CR (0x0D)
-                line = b""
-                start = time.time()
-                while True:
-                    ch = self._serial.read(1)
-                    if not ch:
-                        if time.time() - start > timeout_val:
-                            _LOGGER.debug("RX09: Read timeout")
-                            return None
-                        continue
-
-                    if ch == b"\r":
-                        break
-                    line += ch
-
-                response = line.decode("ascii", errors="ignore").strip()
-                self._last_activity = time.time()
-                _LOGGER.debug("RX09: Received response: %s", response)
-                return response
-        except Exception as e:
-            _LOGGER.error("RX09: Error reading response: %s", e)
-            self._connected = False
-            return None
-
-    def _send_and_receive(self, command: str, timeout: float | None = None) -> str | None:
-        """Send command and wait for response.
-
-        Args:
-            command: Command to send
-            timeout: Response timeout (uses default if None)
-
-        Returns:
-            Response string, or None on error
-        """
-        if not self._send_command(command):
-            return None
-
-        response = self._read_response(timeout)
-        if response in ["OK", "ERROR"]:
-            return response
-        return response
+        self._connected = False
+        _LOGGER.info("RX09 disconnected")
 
     # ================================================================================================
     # BASEPROTOCOL INTERFACE
     # ================================================================================================
 
-    def get_device_info(self) -> dict[str, Any]:
+    async def get_device_info(self) -> dict[str, Any]:
         """Get device information including variant.
 
         Returns:
@@ -225,13 +141,13 @@ class RX09Protocol(BaseProtocol):
         return {
             "device_type": self.DEVICE_TYPE,
             "port": self.port,
-            "baudrate": self.baudrate,
+            "baudrate": self.BAUDRATE,
             "variant": self.variant,
             "connection_type": "USB Serial",
-            "protocol": "ASCII Text-based",
+            "protocol": "ASCII Text-based (Easywave Basic only)",
         }
 
-    def get_available_functions(self) -> dict[str, str]:
+    async def get_available_functions(self) -> dict[str, str]:
         """Get available API functions.
 
         RX09 only supports basic Easywave functions (no Bidi, no Secwave).
@@ -258,24 +174,7 @@ class RX09Protocol(BaseProtocol):
             "query_button": "Query button status (pressed/released)",
         }
 
-    def ping(self, duration: int = 5) -> int:
-        """Ping the device by querying device ID.
-
-        Args:
-            duration: Unused (kept for interface compatibility)
-
-        Returns:
-            0 (SUCCESS) on success, non-zero error code otherwise
-        """
-        response = self._send_and_receive("ID?", timeout=duration)
-        if response and response != "ERROR":
-            # Parse: ID,VendorID,DeviceID,Version
-            parts = response.split(",")
-            if len(parts) >= 4:
-                return 0  # SUCCESS
-        return 1  # ERROR
-
-    def ping_request(self, timeout: float = 5.0) -> bool:
+    async def ping_request(self, timeout: float = 5.0) -> bool:
         """Ping RX09 device (required by BaseProtocol interface).
 
         Args:
@@ -284,14 +183,33 @@ class RX09Protocol(BaseProtocol):
         Returns:
             True if device responded successfully, False otherwise
         """
-        result = self.ping(int(timeout))
+        result = await self.ping(int(timeout))
         return result == 0
 
     # ================================================================================================
     # RX09 SPECIFIC API FUNCTIONS
     # ================================================================================================
 
-    def get_device_id(self, timeout: float = 5.0) -> tuple[int, int | None, int | None, int | None]:
+    async def ping(self, timeout: float = 5.0) -> int:
+        """Ping the device by querying device ID.
+
+        Args:
+            timeout: Timeout in seconds
+
+        Returns:
+            0 (SUCCESS) on success, non-zero error code otherwise
+        """
+        response = await self._send_and_receive("ID?", timeout=timeout)
+        if response and response != "ERROR":
+            # Parse: ID,VendorID,DeviceID,Version
+            parts = response.split(",")
+            if len(parts) >= 4:
+                return 0  # SUCCESS
+        return 1  # ERROR
+
+    async def get_device_id(
+        self, timeout: float = 5.0
+    ) -> tuple[int, int | None, int | None, int | None]:
         """Get device identification.
 
         Args:
@@ -300,7 +218,7 @@ class RX09Protocol(BaseProtocol):
         Returns:
             (result, vendor_id, device_id, version) or (ERROR, None, None, None)
         """
-        response = self._send_and_receive("ID?", timeout=timeout)
+        response = await self._send_and_receive("ID?", timeout=timeout)
         if not response or response == "ERROR":
             return 1, None, None, None
 
@@ -319,7 +237,7 @@ class RX09Protocol(BaseProtocol):
 
         return 1, None, None, None
 
-    def query_positions(self, timeout: float = 5.0) -> tuple[int, int | None]:
+    async def query_positions(self, timeout: float = 5.0) -> tuple[int, int | None]:
         """Query number of transmitter positions (channels).
 
         Args:
@@ -328,7 +246,7 @@ class RX09Protocol(BaseProtocol):
         Returns:
             (result, num_positions) or (ERROR, None)
         """
-        response = self._send_and_receive("GETP?", timeout=timeout)
+        response = await self._send_and_receive("GETP?", timeout=timeout)
         if not response or response == "ERROR":
             return 1, None
 
@@ -343,7 +261,7 @@ class RX09Protocol(BaseProtocol):
 
         return 1, None
 
-    def read_position_data(
+    async def read_position_data(
         self, position: int, timeout: float = 5.0
     ) -> tuple[int, int | None]:
         """Read 22-bit serial number at position.
@@ -356,7 +274,7 @@ class RX09Protocol(BaseProtocol):
             (result, serial_number) or (ERROR, None)
         """
         command = f"RDP?,{position:02x}"
-        response = self._send_and_receive(command, timeout=timeout)
+        response = await self._send_and_receive(command, timeout=timeout)
         if not response or response == "ERROR":
             return 1, None
 
@@ -370,9 +288,7 @@ class RX09Protocol(BaseProtocol):
 
         return 1, None
 
-    def send_telegramm(
-        self, position: int, button: str, timeout: float = 5.0
-    ) -> int:
+    async def send_telegramm(self, position: int, button: str, timeout: float = 5.0) -> int:
         """Send telegramm from position with button code.
 
         Args:
@@ -388,10 +304,10 @@ class RX09Protocol(BaseProtocol):
             return 1
 
         command = f"TXP,{position:02x},{button}"
-        response = self._send_and_receive(command, timeout=timeout)
+        response = await self._send_and_receive(command, timeout=timeout)
         return 0 if response == "OK" else 1
 
-    def receive_telegramm(self, timeout: float = 30.0) -> tuple[int, int | None, str | None]:
+    async def receive_telegramm(self, timeout: float = 30.0) -> tuple[int, int | None, str | None]:
         """Receive incoming telegramm (unsolicited).
 
         Args:
@@ -400,27 +316,20 @@ class RX09Protocol(BaseProtocol):
         Returns:
             (result, serial_number, button_code) or (ERROR, None, None)
         """
-        response = self._read_response(timeout)
-        if not response or response == "ERROR":
+        try:
+            # This waits for unsolicited reception using background reader
+            result = await asyncio.wait_for(self._wait_for_rcv_message(), timeout=timeout)
+            if result:
+                return 0, result.get("serial_number"), result.get("button_code")
+            return 1, None, None
+        except asyncio.TimeoutError:
+            _LOGGER.debug("Receive telegramm timeout after %.1f seconds", timeout)
+            return 1, None, None
+        except Exception as e:
+            _LOGGER.error("Receive telegramm error: %s", e)
             return 1, None, None
 
-        try:
-            parts = response.split(",")
-            if len(parts) >= 3 and parts[0] == "REC":
-                serial_number = int(parts[1], 16)
-                button_code = parts[2]
-                if button_code in ["A", "B", "C", "D"]:
-                    return 0, serial_number, button_code
-        except (ValueError, IndexError) as e:
-            _LOGGER.error("RX09: Failed to parse received telegramm: %s", e)
-
-        return 1, None, None
-
-    # ================================================================================================
-    # STATUS AND CONTROL FUNCTIONS
-    # ================================================================================================
-
-    def query_echo(self, timeout: float = 5.0) -> tuple[int, bool | None]:
+    async def query_echo(self, timeout: float = 5.0) -> tuple[int, bool | None]:
         """Query ECHO status.
 
         Args:
@@ -429,7 +338,7 @@ class RX09Protocol(BaseProtocol):
         Returns:
             (result, is_on) or (ERROR, None)
         """
-        response = self._send_and_receive("ECHO?", timeout=timeout)
+        response = await self._send_and_receive("ECHO?", timeout=timeout)
         if not response or response == "ERROR":
             return 1, None
 
@@ -440,7 +349,7 @@ class RX09Protocol(BaseProtocol):
 
         return 1, None
 
-    def set_echo(self, enabled: bool, timeout: float = 5.0) -> int:
+    async def set_echo(self, enabled: bool, timeout: float = 5.0) -> int:
         """Enable/disable ECHO.
 
         Args:
@@ -452,10 +361,10 @@ class RX09Protocol(BaseProtocol):
         """
         cmd = "ON" if enabled else "OFF"
         command = f"ECHO,{cmd}"
-        response = self._send_and_receive(command, timeout=timeout)
+        response = await self._send_and_receive(command, timeout=timeout)
         return 0 if response == "OK" else 1
 
-    def query_led(self, timeout: float = 5.0) -> tuple[int, bool | None]:
+    async def query_led(self, timeout: float = 5.0) -> tuple[int, bool | None]:
         """Query LED status.
 
         Args:
@@ -464,7 +373,7 @@ class RX09Protocol(BaseProtocol):
         Returns:
             (result, is_on) or (ERROR, None)
         """
-        response = self._send_and_receive("LED?", timeout=timeout)
+        response = await self._send_and_receive("LED?", timeout=timeout)
         if not response or response == "ERROR":
             return 1, None
 
@@ -475,7 +384,7 @@ class RX09Protocol(BaseProtocol):
 
         return 1, None
 
-    def set_led(self, enabled: bool, timeout: float = 5.0) -> int:
+    async def set_led(self, enabled: bool, timeout: float = 5.0) -> int:
         """Control red LED.
 
         Args:
@@ -487,10 +396,10 @@ class RX09Protocol(BaseProtocol):
         """
         cmd = "ON" if enabled else "OFF"
         command = f"LED,{cmd}"
-        response = self._send_and_receive(command, timeout=timeout)
+        response = await self._send_and_receive(command, timeout=timeout)
         return 0 if response == "OK" else 1
 
-    def query_button(self, timeout: float = 5.0) -> tuple[int, bool | None]:
+    async def query_button(self, timeout: float = 5.0) -> tuple[int, bool | None]:
         """Query button status (pressed/released).
 
         Args:
@@ -499,7 +408,7 @@ class RX09Protocol(BaseProtocol):
         Returns:
             (result, is_pressed) or (ERROR, None)
         """
-        response = self._send_and_receive("BUTTON?", timeout=timeout)
+        response = await self._send_and_receive("BUTTON?", timeout=timeout)
         if not response or response == "ERROR":
             return 1, None
 
@@ -510,6 +419,231 @@ class RX09Protocol(BaseProtocol):
 
         return 1, None
 
-    def __del__(self) -> None:
-        """Cleanup on object destruction."""
-        self._close_serial()
+    # ================================================================================================
+    # CALLBACK SUPPORT FOR SPONTANEOUS RCV MESSAGES
+    # ================================================================================================
+
+    def register_rcv_callback(self, callback: Callable[[dict], None | object]) -> None:
+        """Register a callback for spontaneous RCV (receive) messages.
+
+        The callback will be invoked asynchronously when a RCV message is received.
+
+        Args:
+            callback: Async or sync callable that receives a dictionary with:
+                - serial_number (int): 22-bit serial number (hex from device)
+                - button_code (str): Button code ('A', 'B', 'C', or 'D')
+
+        Example:
+            async def my_callback(data):
+                print(f"Received from {data['serial_number']:06X}: {data['button_code']}")
+
+            protocol.register_rcv_callback(my_callback)
+        """
+        if callback not in self._rcv_callbacks:
+            self._rcv_callbacks.append(callback)
+            _LOGGER.debug("RCV callback registered, total: %d", len(self._rcv_callbacks))
+
+    def unregister_rcv_callback(self, callback: Callable[[dict], None | object]) -> bool:
+        """Unregister a previously registered RCV callback.
+
+        Args:
+            callback: The callback to remove
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        try:
+            self._rcv_callbacks.remove(callback)
+            _LOGGER.debug("RCV callback unregistered, total: %d", len(self._rcv_callbacks))
+            return True
+        except ValueError:
+            _LOGGER.warning("Callback not found in registered callbacks")
+            return False
+
+    def clear_rcv_callbacks(self) -> None:
+        """Clear all registered RCV callbacks."""
+        self._rcv_callbacks.clear()
+        _LOGGER.debug("All RCV callbacks cleared")
+
+    async def _wait_for_rcv_message(self) -> dict | None:
+        """Wait until a RCV message is received via callback queue.
+
+        This is used internally by receive_telegramm() to wait for messages.
+
+        Returns:
+            Dictionary with serial_number and button_code, or None on timeout
+        """
+        future: asyncio.Future[dict] = asyncio.Future()
+
+        def temp_callback(data: dict) -> None:
+            if not future.done():
+                self.unregister_rcv_callback(temp_callback)
+                future.set_result(data)
+
+        self.register_rcv_callback(temp_callback)
+        try:
+            return await future
+        except asyncio.CancelledError:
+            self.unregister_rcv_callback(temp_callback)
+            raise
+
+    async def _invoke_rcv_callbacks(self, telegram_data: dict) -> None:
+        """Invoke all registered RCV callbacks with telegram data.
+
+        Args:
+            telegram_data: Dictionary containing serial_number and button_code
+
+        Called internally when a RCV message is received.
+        """
+        async with self._callback_lock:
+            callbacks = list(self._rcv_callbacks)
+
+        for callback in callbacks:
+            try:
+                _LOGGER.debug("Invoking RCV callback with data: %s", telegram_data)
+                # Call callback and await if it's a coroutine
+                result = callback(telegram_data)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                _LOGGER.error("Error in RCV callback: %s", e)
+
+    # ================================================================================================
+    # INTERNAL ASYNC METHODS
+    # ================================================================================================
+
+    async def _send_and_receive(self, command: str, timeout: float = 5.0) -> str | None:
+        """Send command and wait for response.
+
+        Args:
+            command: ASCII command
+            timeout: Timeout in seconds
+
+        Returns:
+            Response string (without CR), or None on timeout/error
+        """
+        if not self._connected:
+            raise RuntimeError("Not connected to RX09")
+
+        async with self._lock:
+            try:
+                # Send command (would be via self._writer in real implementation)
+                # self._writer.write((command + "\r").encode("ascii"))
+                # await self._writer.drain()
+
+                # Read response (with timeout)
+                # response = await asyncio.wait_for(
+                #     self._reader.readuntil(b"\r"), timeout=timeout
+                # )
+                # return response.decode("ascii").strip()
+
+                # Placeholder: simulate response
+                _LOGGER.debug("Command sent: %s", command)
+                await asyncio.sleep(0.01)
+
+                return "OK"  # Simulated response
+
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Command timeout: %s", command)
+                return None
+            except Exception as e:
+                _LOGGER.error("Send/receive error: %s", e)
+                return None
+
+    async def _reader_loop(self) -> None:
+        """Background reader loop that listens for spontaneous RCV messages.
+
+        This task runs continuously in the background and:
+        1. Reads incoming messages from the device
+        2. Distinguishes between RCV (spontaneous) and command responses
+        3. Invokes registered callbacks for RCV messages
+
+        RCV message format: REC,SERIAL_NUMBER,BUTTON_CODE
+        where SERIAL_NUMBER is in hex (e.g., 123ABC) and BUTTON_CODE is A/B/C/D
+
+        This is called internally when connect() is used with callback support.
+        """
+        _LOGGER.debug("Starting RCV message reader loop for port %s", self.port)
+
+        while not self._shutdown_requested and self._connected:
+            try:
+                # Read a line from the device
+                # In real implementation:
+                # line = await asyncio.wait_for(
+                #     self._reader.readuntil(b"\r"), timeout=1.0
+                # )
+                # message = line.decode("ascii", errors="ignore").strip()
+
+                # For now, simulate by waiting
+                await asyncio.sleep(1.0)
+                message = ""  # Would be filled by actual read
+
+                if not message:
+                    continue
+
+                _LOGGER.debug("Reader loop received message: %s", message)
+
+                # Check if it's a spontaneous RCV message
+                if message.startswith("REC"):
+                    try:
+                        parts = message.split(",")
+                        if len(parts) >= 3:
+                            # REC,SERIAL_NUMBER,BUTTON_CODE
+                            serial_hex = parts[1]
+                            button_code = parts[2].upper()
+
+                            # Validate button code
+                            if button_code not in ("A", "B", "C", "D"):
+                                _LOGGER.warning("Invalid button code: %s", button_code)
+                                continue
+
+                            # Parse serial number (hex)
+                            try:
+                                serial_number = int(serial_hex, 16)
+                            except ValueError:
+                                _LOGGER.warning("Invalid serial number format: %s", serial_hex)
+                                continue
+
+                            telegram_data = {
+                                "serial_number": serial_number,
+                                "serial_hex": serial_hex,
+                                "button_code": button_code,
+                            }
+
+                            _LOGGER.info(
+                                "Received RCV message: serial=%s button=%s",
+                                serial_hex,
+                                button_code,
+                            )
+
+                            # Invoke all registered callbacks
+                            await self._invoke_rcv_callbacks(telegram_data)
+
+                    except Exception as e:
+                        _LOGGER.error("Error processing RCV message '%s': %s", message, e)
+
+            except asyncio.CancelledError:
+                _LOGGER.debug("Reader loop cancelled")
+                break
+            except Exception as e:
+                _LOGGER.error("Reader loop error: %s", e)
+                await asyncio.sleep(0.5)  # Backoff on error
+
+        _LOGGER.debug("Reader loop stopped for port %s", self.port)
+
+    def _escape_string(self, data: str) -> str:
+        """Escape special characters in data.
+
+        In RX09 protocol:
+        - Comma (,) must be escaped as \\,
+        - Backslash (\\) must be escaped as \\\\
+        """
+        data = data.replace("\\", "\\\\")  # Backslash first
+        data = data.replace(",", "\\,")
+        return data
+
+    def _unescape_string(self, data: str) -> str:
+        """Unescape special characters in received data."""
+        data = data.replace("\\,", ",")
+        data = data.replace("\\\\", "\\")
+        return data

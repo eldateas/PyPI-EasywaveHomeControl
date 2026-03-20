@@ -2,24 +2,61 @@
 
 This directory contains example scripts and test devices demonstrating how to use the easywave-rx-module library.
 
+## Quick Start
+
+All examples use the **Async API** which is recommended for:
+- Home Assistant integration (no blocking calls on event loop)
+- Modern Python development (asyncio/await)
+- Better error handling with timeouts
+- Non-blocking device operations
+
 ## Async API Examples (Recommended)
+
+### basic_example.py
+
+Simple, clean example of the async API - a great starting point!
+
+```bash
+python basic_example.py
+```
+
+**Shows:**
+- `AsyncDeviceFactory.create()` - Creates and connects device automatically
+- Getting device status
+- Querying hardware/firmware versions
+- Device connectivity check
+- Proper `await device.disconnect()` cleanup
+
+**Key Point:** `create()` automatically calls `connect()` internally, so you only need to call `disconnect()` when done.
 
 ### async_example.py
 
-Simple, clean example of the async API.
+Comprehensive async demonstration with device information and function listing.
 
 ```bash
 python async_example.py
 ```
 
 **Shows:**
-- `AsyncDeviceFactory.create()` - Creates and connects device automatically
-- Getting device information
-- Pinging the device
-- Listing available functions
-- **Important:** Proper `await device.disconnect()` in finally block
+- Complete async device creation and connection
+- Device info retrieval
+- Function discovery
+- Ping/connectivity testing
+- Available async methods documentation
 
-**Key Point:** `create()` automatically calls `connect()` internally, so you only need to call `disconnect()` when done.
+### rcv_callback_example.py
+
+RX09-specific example showing how to receive button presses asynchronously.
+
+```bash
+python rcv_callback_example.py
+```
+
+**Shows:**
+- RX09 device setup
+- Waiting for button telegram
+- Timeout handling
+- Multiple press reception loop
 
 ### ha_integration_example.py
 
@@ -40,6 +77,8 @@ This is the recommended pattern for Home Assistant custom components.
 
 ---
 
+## Test Suites
+
 ### test_all_devices.py
 
 Master test suite showing all 5 supported devices across 2 protocol families.
@@ -47,6 +86,133 @@ Master test suite showing all 5 supported devices across 2 protocol families.
 ```bash
 python test_all_devices.py
 ```
+
+**Tests:**
+- RX11 (USB Transceiver)
+- RX21 (Serial Module)
+- RX22 (Serial Module)
+- RX25 (Serial Module)
+- RX09 (ASCII Protocol)
+
+### test_async_api.py
+
+Quick test of async API (Home Assistant compatibility check).
+
+```bash
+python test_async_api.py
+```
+
+### test_rx09.py, test_rx11.py, test_rx22.py
+
+Device-specific tests for individual protocols.
+
+```bash
+python test_rx09.py
+python test_rx11.py
+python test_rx22.py
+```
+
+---
+
+## Supported Devices
+
+| Device | Protocol | Features |
+|--------|----------|----------|
+| RX09 | ASCII | Basic receiver, button presses |
+| RX11 | Binary | USB transceiver (115200 bps) |
+| RX21 | Binary | Serial module (115200 bps) |
+| RX22 | Binary | Serial module (115200 bps) |
+| RX25 | Binary | Serial module (115200 bps) |
+
+---
+
+## Connection Parameters
+
+All examples use these default connection parameters:
+
+```python
+device = await AsyncDeviceFactory.create(
+    "RX22",                    # Device type
+    port="/dev/ttyUSB0",       # Serial port
+    timeout=5.0                # Default timeout
+)
+```
+
+**Linux:** `/dev/ttyUSB0`, `/dev/ttyAMA0` (Raspberry Pi)
+**Windows:** `COM1`, `COM3`, etc.
+**macOS:** `/dev/tty.usbserial-*`
+
+---
+
+## Error Handling
+
+All async methods support timeout handling:
+
+```python
+try:
+    result, data = await device.query_hw_version(timeout=5.0)
+    if result == ErrorCode.SUCCESS:
+        print(f"Hardware: {data.hex()}")
+except asyncio.TimeoutError:
+    print("Timeout waiting for device")
+except Exception as e:
+    print(f"Error: {e}")
+finally:
+    await device.disconnect()
+```
+
+---
+
+## Running Examples
+
+### Prerequisites
+
+```bash
+pip install easywave-rx-module
+python3 -m pip install --upgrade pip
+```
+
+### Execute
+
+```bash
+cd examples/
+
+# Run basic example
+python3 basic_example.py
+
+# Run with logging
+PYTHONUNBUFFERED=1 python3 basic_example.py 2>&1 | tee output.log
+```
+
+### Troubleshooting
+
+If you get `No module named 'serial'`:
+```bash
+pip install pyserial
+```
+
+If you get port permission denied:
+```bash
+# Linux - add user to dialout group
+sudo usermod -a -G dialout $USER
+# Then logout and login again
+
+# Or run with sudo
+sudo python3 basic_example.py
+```
+
+---
+
+## Integration with Home Assistant
+
+The library is designed specifically for Home Assistant integration:
+
+1. Pure async API (no blocking calls)
+2. Timeout support on all operations
+3. Graceful error handling
+4. Resource cleanup on disconnect
+
+See `ha_integration_example.py` for the recommended pattern.
 
 **Output:**
 - Device comparison table (baudrate, variants, function count)
@@ -70,7 +236,7 @@ python test_rx11.py
 
 ### test_rx22.py
 
-Test device for **RX22 (Serial Module Enhanced - RxModule family)**
+Test device for **RX22 (Serial Module - RxModule family)**
 
 ```bash
 python test_rx22.py

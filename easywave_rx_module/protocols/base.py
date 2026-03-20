@@ -1,73 +1,56 @@
-"""Abstract protocol base class for EASYWAVE devices.
+"""Base protocol interface for all EASYWAVE device families.
 
-All device protocols inherit from BaseProtocol to provide a common interface.
+Defines the abstract interface that all device implementations must follow.
+Pure async implementation using asyncio.
 """
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
 
 
 class BaseProtocol(ABC):
-    """Abstract base class for EASYWAVE device protocols.
+    """Abstract base class for EASYWAVE protocol implementations.
 
-    Different device families (RxModule, RX09, etc.) implement this interface
-    to provide a consistent way for applications (like Home Assistant) to interact
-    with devices regardless of their underlying protocol.
-
-    Attributes:
-        port: Serial/communication port identifier
-        device_type: Device identifier (e.g., "RX11", "RX09")
-        variant: Protocol variant if supported (e.g., "ew", "dev")
+    All device classes must inherit from this and implement these methods.
+    This ensures consistent async/await interface across all device families.
     """
 
-    def __init__(
-        self,
-        port: str,
-        device_type: str,
-        variant: str | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize protocol.
+    @abstractmethod
+    async def ping_request(self, timeout: float = 5.0) -> bool:
+        """Ping device to verify connection (required by all devices).
 
         Args:
-            port: Communication port path
-            device_type: Device type identifier
-            variant: Optional protocol variant (e.g., "ew", "dev")
-            *args: Protocol-specific positional arguments
-            **kwargs: Protocol-specific keyword arguments
-        """
-        self.port = port
-        self.device_type = device_type
-        self.variant = variant or "default"
-
-    @abstractmethod
-    def get_device_info(self) -> dict[str, Any]:
-        """Get device information.
+            timeout: Timeout in seconds
 
         Returns:
-            Dictionary with device metadata (type, port, variant, etc.)
+            True if device responded, False on timeout/error
         """
-        pass
+        ...
 
     @abstractmethod
-    def get_available_functions(self) -> dict[str, str]:
-        """Get available API functions for this device and variant.
+    async def get_device_info(self) -> dict[str, Any]:
+        """Get device information (type, port, baudrate, etc).
 
         Returns:
-            Dictionary mapping function names to descriptions
-            e.g., {"ping": "Ping device", "ew_send_cmd": "Send EasyWave command"}
+            Dictionary with device metadata
         """
-        pass
+        ...
 
     @abstractmethod
-    def ping_request(self, timeout: float = 1.0) -> bool:
-        """Ping device to check connectivity.
-
-        Args:
-            timeout: Request timeout in seconds
+    async def get_available_functions(self) -> dict[str, str]:
+        """Get list of available functions for this device.
 
         Returns:
-            True if device responded, False otherwise
+            Dictionary of function names and descriptions
         """
-        pass
+        ...
+
+    @abstractmethod
+    async def disconnect(self) -> None:
+        """Disconnect from device gracefully.
+
+        Called during HA shutdown or error recovery.
+        """
+        ...

@@ -5,10 +5,13 @@ Provides device classes for the RxModule protocol family:
 - RX21, RX22, RX25: Serial modules
 """
 
+import logging
 from typing import Any
 
 from ...protocols.base import BaseProtocol
 from .protocol import RxModule
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class RxModuleDevice(RxModule, BaseProtocol):
@@ -19,13 +22,12 @@ class RxModuleDevice(RxModule, BaseProtocol):
     """
 
     DEVICE_TYPE: str = "RX_BASE"
-    DEFAULT_BAUDRATE: int = 38400
+    DEFAULT_BAUDRATE: int = 115200
     DEFAULT_VARIANT: str = "ew"
 
     def __init__(
         self,
         port: str,
-        baudrate: int | None = None,
         timeout: float = 5.0,
         variant: str | None = None,
     ) -> None:
@@ -33,26 +35,18 @@ class RxModuleDevice(RxModule, BaseProtocol):
 
         Args:
             port: Serial port path
-            baudrate: Communication baudrate (defaults to device-specific)
             timeout: Read timeout in seconds (stored but not used by RxModule)
             variant: Protocol variant (ew, dev, basic, pro)
         """
         self.port = port
-        self.baudrate = baudrate or self.DEFAULT_BAUDRATE
+        self.baudrate = self.DEFAULT_BAUDRATE  # Fixed at device default
         self.timeout = timeout
         self.variant = variant or self.DEFAULT_VARIANT
 
         # Initialize RxModule with device parameters
-        # Note: RxModule doesn't accept timeout parameter, it handles serial timeouts internally
         RxModule.__init__(self, port=port, baudrate=self.baudrate)
-        BaseProtocol.__init__(
-            self,
-            port=port,
-            device_type=self.DEVICE_TYPE,
-            variant=self.variant,
-        )
 
-    def get_device_info(self) -> dict[str, Any]:
+    async def get_device_info(self) -> dict[str, Any]:
         """Get device information including variant.
 
         Returns:
@@ -66,7 +60,7 @@ class RxModuleDevice(RxModule, BaseProtocol):
             "connection_type": "USB Serial" if "USB" in self.DEVICE_TYPE else "Direct Serial UART",
         }
 
-    def get_available_functions(self) -> dict[str, str]:
+    async def get_available_functions(self) -> dict[str, str]:
         """Get available API functions.
 
         Returns:
@@ -106,7 +100,7 @@ class RxModuleDevice(RxModule, BaseProtocol):
             "sec_wr_userdata_request": "Write user data to Secwave security storage entry",
         }
 
-    def ping_request(self, timeout: float = 5.0) -> bool:
+    async def ping_request(self, timeout: float = 5.0) -> bool:
         """Ping RX Module device (required by BaseProtocol interface).
 
         Args:
@@ -115,11 +109,20 @@ class RxModuleDevice(RxModule, BaseProtocol):
         Returns:
             True if device responded successfully, False otherwise
         """
-        result = self.ping(int(timeout))
+        result = await self.ping(int(timeout))
         return result == 0
+
+    async def disconnect(self) -> None:
+        """Disconnect from device and clear resources.
+
+        This method closes the serial connection and cleans up resources.
+        """
+        self._connected = False
+        _LOGGER.info("RxModule disconnected from %s", self.port)
 
 
 # Device type implementations
+
 
 class RX11Device(RxModuleDevice):
     """EASYWAVE RX11 USB Transceiver."""
@@ -136,14 +139,14 @@ class RX21Device(RxModuleDevice):
 
 
 class RX22Device(RxModuleDevice):
-    """EASYWAVE RX22 Serial Module (115200 bps, enhanced)."""
+    """EASYWAVE RX22 Serial Module (115200 bps)."""
 
     DEVICE_TYPE = "RX22"
     DEFAULT_BAUDRATE = 115200
 
 
 class RX25Device(RxModuleDevice):
-    """EASYWAVE RX25 Serial Module (115200 bps, high-speed)."""
+    """EASYWAVE RX25 Serial Module (115200 bps)."""
 
     DEVICE_TYPE = "RX25"
     DEFAULT_BAUDRATE = 115200

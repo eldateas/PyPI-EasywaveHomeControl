@@ -9,14 +9,14 @@ callbacks for connection state changes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from enum import IntEnum
 import logging
 import os
 import struct
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Any
 
 import serial
@@ -247,18 +247,23 @@ class Request:
     # Result
     icp: ICP = field(default_factory=ICP)
 
-    # Synchronization
-    event: threading.Event = field(default_factory=threading.Event)
-    future: asyncio.Future | None = None
+    async def wait(self, timeout: float | None = None) -> bool:
+        """Wait for request completion with async polling."""
+        start_time = time.time()
+        poll_interval = 0.001  # 1ms polling interval
 
-    def wait(self, timeout: float | None = None) -> bool:
-        """Wait for request completion."""
-        return self.event.wait(timeout)
+        while not self.completed:
+            if timeout is not None:
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    return False
+            await asyncio.sleep(poll_interval)
 
-    def signal(self):
+        return True
+
+    def signal(self) -> None:
         """Signal request completion."""
         self.completed = True
-        self.event.set()
 
 
 # ====================================================================================================
@@ -646,7 +651,7 @@ class RxModule:
     # CONNECTION MANAGEMENT
     # ================================================================================================
 
-    def connect(self) -> bool:
+    async def connect(self) -> bool:
         """Connect to the RX11 module."""
         try:
             self._shutdown_requested = False
@@ -664,7 +669,7 @@ class RxModule:
 
             # Reset state
             self._reset_queues()
-            self.cancel_all_io_requests()
+            await self.cancel_all_io_requests()
             self._reset_rx_state()
 
             # Aggressive buffer clearing
@@ -680,7 +685,7 @@ class RxModule:
                         self._serial.read(waiting)
                         drained += waiting
                     else:
-                        time.sleep(0.02)
+                        await asyncio.sleep(0.02)
                 except _SERIAL_ERRORS:
                     break
 
@@ -707,9 +712,7 @@ class RxModule:
                 self._reconnect_attempts = 0
 
             # Start serial handler thread
-            self._serial_handler_thread = threading.Thread(
-                target=self._serial_handler, daemon=True, name="RxModule-SerialHandler"
-            )
+            self._serial_handler_task = asyncio.create_task(self._serial_handler())
             self._serial_handler_thread.start()
 
             self._connected = True
@@ -718,7 +721,7 @@ class RxModule:
         else:
             return True
 
-    def flush_serial_buffer(self):
+    async def flush_serial_buffer(self):
         """Flush serial input buffer and reset RX state.
 
         Call this before sending critical commands (e.g. version queries)
@@ -737,20 +740,23 @@ class RxModule:
                     self._serial.read(waiting)
                     drained += waiting
                 else:
-                    time.sleep(0.01)
+                    await asyncio.sleep(0.01)
             if drained > 0:
                 _LOGGER.debug("Flushed %d stale bytes from serial buffer", drained)
         except _SERIAL_ERRORS:
             pass
 
-    def dispose(self):
+    async def dispose(self):
         """Disconnect and cleanup."""
         self._shutdown_requested = True
-        self.cancel_all_io_requests()
+        await self.cancel_all_io_requests()
 
         # Wait for serial handler thread
-        if self._serial_handler_thread and self._serial_handler_thread.is_alive():
-            self._serial_handler_thread.join(timeout=3.0)
+        if self._serial_handler_task and not self._serial_handler_task.done():
+            try:
+                await asyncio.wait([self._serial_handler_task], timeout=3.0)
+            except (asyncio.TimeoutError, AttributeError):
+                pass
 
         # Drain remaining bytes
         if self._serial and self._serial.is_open:
@@ -762,7 +768,7 @@ class RxModule:
                     if self._serial.in_waiting > 0:
                         self._serial.read(self._serial.in_waiting)
                     else:
-                        time.sleep(0.02)
+                        await asyncio.sleep(0.02)
             except _SERIAL_ERRORS:
                 pass
 
@@ -822,8 +828,7 @@ class RxModule:
 
             if (
                 self._tx_req_queued_size == 0
-                and (self._tx_req_sent_size + len(self._req_pending))
-                < self.MAX_REQUEST_COUNT
+                and (self._tx_req_sent_size + len(self._req_pending)) < self.MAX_REQUEST_COUNT
             ):
                 self._enqueue_sent(req)
                 self._write_to_buffer(req.irp, req.req_str)
@@ -839,9 +844,7 @@ class RxModule:
         """Add request to queued list."""
         if self._tx_req_queued_front == -1:
             self._tx_req_queued_front = 0
-        self._tx_req_queued_rear = (
-            self._tx_req_queued_rear + 1
-        ) % self.MAX_REQUEST_QUEUED
+        self._tx_req_queued_rear = (self._tx_req_queued_rear + 1) % self.MAX_REQUEST_QUEUED
         self._tx_req_queued[self._tx_req_queued_rear] = req
         self._tx_req_queued_size += 1
 
@@ -851,9 +854,7 @@ class RxModule:
             return None
         req = self._tx_req_queued[self._tx_req_queued_front]
         self._tx_req_queued[self._tx_req_queued_front] = None
-        self._tx_req_queued_front = (
-            self._tx_req_queued_front + 1
-        ) % self.MAX_REQUEST_QUEUED
+        self._tx_req_queued_front = (self._tx_req_queued_front + 1) % self.MAX_REQUEST_QUEUED
         self._tx_req_queued_size -= 1
         return req
 
@@ -951,7 +952,7 @@ class RxModule:
         else:
             return True
 
-    def _serial_handler(self):
+    async def _serial_handler(self):
         """Main serial handler thread."""
         last_health_check = time.time()
 
@@ -965,9 +966,7 @@ class RxModule:
 
                     if not self._is_serial_port_valid():
                         if not self._shutdown_requested:
-                            _LOGGER.error(
-                                "Serial port invalid - USB device may have been removed"
-                            )
+                            _LOGGER.error("Serial port invalid - USB device may have been removed")
                             with self._protocol_lock:
                                 self._state_good = False
                                 self._connection_healthy = False
@@ -995,7 +994,7 @@ class RxModule:
                     break
 
                 self._process_queued_requests()
-                time.sleep(0.01)
+                await asyncio.sleep(0.01)
 
             except _SERIAL_ERRORS as e:
                 if not self._shutdown_requested:
@@ -1080,9 +1079,7 @@ class RxModule:
         if not success or icp is None:
             in_startup = time.time() < self._startup_tolerance_until
             if in_startup:
-                _LOGGER.debug(
-                    "Discarding invalid packet during startup (len=%d)", len(raw_buffer)
-                )
+                _LOGGER.debug("Discarding invalid packet during startup (len=%d)", len(raw_buffer))
             elif len(raw_buffer) > 0:
                 _LOGGER.warning(
                     "Failed to decode packet (len=%d, hex=%s)",
@@ -1123,9 +1120,7 @@ class RxModule:
                 if in_startup:
                     _LOGGER.debug("Ignoring unexpected IPP during startup")
                     return
-                _LOGGER.warning(
-                    "Unexpected IPP (handle=0x%04x) - no request pending", handle
-                )
+                _LOGGER.warning("Unexpected IPP (handle=0x%04x) - no request pending", handle)
                 return
 
             req = self._dequeue_sent()
@@ -1153,9 +1148,7 @@ class RxModule:
             if req.cancel:
                 self._cancel_request_impl(req)
 
-    def _process_icp(
-        self, handle: int, icp: ICP, icp_byte_count: int, raw_buffer: bytes
-    ):
+    def _process_icp(self, handle: int, icp: ICP, icp_byte_count: int, raw_buffer: bytes):
         """Process an I/O Completion Packet."""
         in_startup = time.time() < self._startup_tolerance_until
 
@@ -1234,8 +1227,7 @@ class RxModule:
 
             while (
                 self._tx_req_queued_size > 0
-                and (self._tx_req_sent_size + len(self._req_pending))
-                < self.MAX_REQUEST_COUNT
+                and (self._tx_req_sent_size + len(self._req_pending)) < self.MAX_REQUEST_COUNT
             ):
                 req = self._dequeue_queued()
                 if not req:
@@ -1291,7 +1283,7 @@ class RxModule:
         cancel_irp = IRP(function=FunctionCode.CANCEL_IO, params=cancel_params)
         self._write_to_buffer(cancel_irp, "CANCEL_IO")
 
-    def cancel_all_io_requests(self):
+    async def cancel_all_io_requests(self):
         """Cancel all pending requests."""
         with self._protocol_lock:
             while self._tx_req_queued_size > 0:
@@ -1321,14 +1313,14 @@ class RxModule:
     # HIGH-LEVEL API FUNCTIONS
     # ================================================================================================
 
-    def query_hw_version(self, timeout: float = 5.0) -> tuple[int, bytes]:
+    async def query_hw_version(self, timeout: float = 5.0) -> tuple[int, bytes]:
         """Query hardware version."""
         irp = IRP(function=FunctionCode.MA_QUERY_HW_VER, params=b"")
         req = self._create_request(irp, 1, 19, "MA_QUERY_HW_VER")
 
         self._place_request(req)
-        if not req.wait(timeout):
-            self.cancel_all_io_requests()
+        if not await req.wait(timeout):
+            await self.cancel_all_io_requests()
             return ErrorCode.ERR_RF_TIMEOUT, bytes(16)
 
         if req.icp.result == ErrorCode.SUCCESS:
@@ -1337,14 +1329,14 @@ class RxModule:
             return req.icp.result, hw_str
         return req.icp.result, bytes(16)
 
-    def query_fw_version(self, timeout: float = 5.0) -> tuple[int, int, int, bool]:
+    async def query_fw_version(self, timeout: float = 5.0) -> tuple[int, int, int, bool]:
         """Query firmware version."""
         irp = IRP(function=FunctionCode.MA_QUERY_FW_VER, params=b"")
         req = self._create_request(irp, 1, 6, "MA_QUERY_FW_VER")
 
         self._place_request(req)
-        if not req.wait(timeout):
-            self.cancel_all_io_requests()
+        if not await req.wait(timeout):
+            await self.cancel_all_io_requests()
             return ErrorCode.ERR_RF_TIMEOUT, 0, 0, False
 
         if req.icp.result == ErrorCode.SUCCESS:
@@ -1355,13 +1347,13 @@ class RxModule:
             return req.icp.result, major, minor, incomplete
         return req.icp.result, 0, 0, False
 
-    def ping(self, duration: int = 5) -> int:
+    async def ping(self, duration: int = 5) -> int:
         """Ping the module."""
         irp = IRP(function=FunctionCode.PING_RCV, params=b"")
         req = self._create_request(irp, 1, 3, "PING_RCV")
 
         self._place_request(req)
-        if not req.wait(duration):
+        if not await req.wait(duration):
             return ErrorCode.ERR_RF_TIMEOUT
 
         return req.icp.result
@@ -1370,14 +1362,14 @@ class RxModule:
     # EASYWAVE BASIC API FUNCTIONS
     # ================================================================================================
 
-    def ew_get_fd_serial_request(self, index: int, timeout: float = 5.0) -> tuple[int, bytes]:
+    async def ew_get_fd_serial_request(self, index: int, timeout: float = 5.0) -> tuple[int, bytes]:
         """Get EW serial number at index."""
         params = encode_uint16(index)
         irp = IRP(function=FunctionCode.EW_GET_FD_SERIAL, params=params)
         req = self._create_request(irp, 3, 19, "EW_GET_FD_SERIAL")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EW_GET_FD_SERIAL)
@@ -1385,13 +1377,13 @@ class RxModule:
             return req.icp.result, serial
         return req.icp.result, bytes(16)
 
-    def ew_rcv_button_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
+    async def ew_rcv_button_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
         """Receive EW button press."""
         irp = IRP(function=FunctionCode.EW_RCV_BUTTON, params=b"")
         req = self._create_request(irp, 1, 21, "EW_RCV_BUTTON")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EW_RCV_BUTTON)
@@ -1401,21 +1393,21 @@ class RxModule:
             return req.icp.result, info_type, transmitter, info_data
         return req.icp.result, 0, bytes(16), bytes(8)
 
-    def ew_send_cmd_request(self, gateway: bytes, button: int, timeout: float = 5.0) -> int:
+    async def ew_send_cmd_request(self, gateway: bytes, button: int, timeout: float = 5.0) -> int:
         """Send EW command."""
         params = encode_serial_array(gateway) + bytes([button])
         irp = IRP(function=FunctionCode.EW_SEND_CMD, params=params)
         req = self._create_request(irp, 18, 3, "EW_SEND_CMD")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def start_ew_send_cmd_loop(self, gateway: bytes, button: int) -> None:
+    async def start_ew_send_cmd_loop(self, gateway: bytes, button: int) -> None:
         """Start continuous EW send command loop (dead man's switch)."""
         if self._send_cmd_loop_running:
-            self.stop_ew_send_cmd_loop()
+            await self.stop_ew_send_cmd_loop()
 
         self._send_cmd_loop_gateway = gateway
         self._send_cmd_loop_button = button
@@ -1428,7 +1420,7 @@ class RxModule:
         )
         self._send_cmd_loop_thread.start()
 
-    def stop_ew_send_cmd_loop(self) -> None:
+    async def stop_ew_send_cmd_loop(self) -> None:
         """Stop continuous EW send command loop.
 
         Gracefully stops the loop and drains any pending requests.
@@ -1464,14 +1456,16 @@ class RxModule:
         with self._send_cmd_loop_lock:
             return {
                 "running": self._send_cmd_loop_running,
-                "gateway": self._send_cmd_loop_gateway.hex() if self._send_cmd_loop_gateway else None,
+                "gateway": (
+                    self._send_cmd_loop_gateway.hex() if self._send_cmd_loop_gateway else None
+                ),
                 "button": self._send_cmd_loop_button,
                 "queued": len(self._send_cmd_loop_queue),
                 "pending": len(self._send_cmd_loop_pending),
                 "stats": self._send_cmd_loop_stats.copy(),
             }
 
-    def _ew_send_cmd_loop(self) -> None:
+    async def _ew_send_cmd_loop(self) -> None:
         """Internal pipeline loop for continuous EW send commands.
 
         Implements an asynchronous pipeline:
@@ -1484,17 +1478,21 @@ class RxModule:
         try:
             while self._send_cmd_loop_running or self._send_cmd_loop_drain:
                 if self._send_cmd_loop_gateway is None or self._send_cmd_loop_button is None:
-                    time.sleep(0.01)
+                    await asyncio.sleep(0.01)
                     continue
 
                 # Phase 1: Prepare new requests for the queue (pipeline ahead of execution)
                 with self._send_cmd_loop_lock:
                     # Keep queue filled with pre-prepared requests (max 2 ahead)
                     max_queue_depth = 2
-                    while (len(self._send_cmd_loop_queue) < max_queue_depth and
-                           self._send_cmd_loop_running):
+                    while (
+                        len(self._send_cmd_loop_queue) < max_queue_depth
+                        and self._send_cmd_loop_running
+                    ):
                         # Create request but don't send yet
-                        params = encode_serial_array(self._send_cmd_loop_gateway) + bytes([self._send_cmd_loop_button])
+                        params = encode_serial_array(self._send_cmd_loop_gateway) + bytes(
+                            [self._send_cmd_loop_button]
+                        )
                         irp = IRP(function=FunctionCode.EW_SEND_CMD, params=params)
                         req = self._create_request(irp, 18, 3, "EW_SEND_CMD_LOOP")
                         self._send_cmd_loop_queue.append(req)
@@ -1522,9 +1520,11 @@ class RxModule:
                 # Phase 3: Send next queued request if space available in pending
                 with self._send_cmd_loop_lock:
                     max_pending = 3  # Allow up to 3 concurrent requests
-                    if (self._send_cmd_loop_queue and
-                        len(self._send_cmd_loop_pending) < max_pending and
-                        (self._send_cmd_loop_running or self._send_cmd_loop_drain)):
+                    if (
+                        self._send_cmd_loop_queue
+                        and len(self._send_cmd_loop_pending) < max_pending
+                        and (self._send_cmd_loop_running or self._send_cmd_loop_drain)
+                    ):
 
                         req = self._send_cmd_loop_queue.pop(0)
                         self._place_request(req)  # Send it
@@ -1534,18 +1534,19 @@ class RxModule:
                         # Apply backoff if we've had consecutive errors
                         if self._send_cmd_loop_consecutive_errors > 0:
                             backoff = min(
-                                self._send_cmd_loop_backoff_delay * (2 ** (self._send_cmd_loop_consecutive_errors - 1)),
-                                self._send_cmd_loop_max_backoff
+                                self._send_cmd_loop_backoff_delay
+                                * (2 ** (self._send_cmd_loop_consecutive_errors - 1)),
+                                self._send_cmd_loop_max_backoff,
                             )
                             _LOGGER.debug(
                                 "EW_SEND_CMD_LOOP recovering from errors (consecutive: %d, backoff: %.2fs)",
                                 self._send_cmd_loop_consecutive_errors,
-                                backoff
+                                backoff,
                             )
-                            time.sleep(backoff)
+                            await asyncio.sleep(backoff)
 
                 # Small sleep to prevent CPU spinning
-                time.sleep(0.001)
+                await asyncio.sleep(0.001)
 
         except Exception as e:
             _LOGGER.error("EW_SEND_CMD_LOOP fatal error: %s", e)
@@ -1557,18 +1558,18 @@ class RxModule:
                     "EW_SEND_CMD_LOOP exiting. Stats: sent=%d, success=%d, errors=%d",
                     self._send_cmd_loop_stats["sent"],
                     self._send_cmd_loop_stats["success"],
-                    self._send_cmd_loop_stats["errors"]
+                    self._send_cmd_loop_stats["errors"],
                 )
                 self._send_cmd_loop_queue.clear()
                 self._send_cmd_loop_pending.clear()
 
-    def ew_rcv_ex_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
+    async def ew_rcv_ex_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
         """Receive EW extended telegram."""
         irp = IRP(function=FunctionCode.EW_RCV_EX, params=b"")
         req = self._create_request(irp, 1, 28, "EW_RCV_EX")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EW_RCV_EX)
@@ -1582,14 +1583,16 @@ class RxModule:
     # EASYWAVE BIDI API FUNCTIONS
     # ================================================================================================
 
-    def ewb_get_fd_serial_request(self, index: int, timeout: float = 5.0) -> tuple[int, bytes]:
+    async def ewb_get_fd_serial_request(
+        self, index: int, timeout: float = 5.0
+    ) -> tuple[int, bytes]:
         """Get EWB serial number at index."""
         params = encode_uint16(index)
         irp = IRP(function=FunctionCode.EWB_GET_FD_SERIAL, params=params)
         req = self._create_request(irp, 3, 19, "EWB_GET_FD_SERIAL")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_GET_FD_SERIAL)
@@ -1597,28 +1600,28 @@ class RxModule:
             return req.icp.result, serial
         return req.icp.result, bytes(16)
 
-    def ewb_add_nfilter_request(self, gateway: bytes, timeout: float = 5.0) -> int:
+    async def ewb_add_nfilter_request(self, gateway: bytes, timeout: float = 5.0) -> int:
         """Add EWB gateway to filter."""
         params = encode_serial_array(gateway)
         irp = IRP(function=FunctionCode.EWB_ADD_NFILTER, params=params)
         req = self._create_request(irp, 17, 3, "EWB_ADD_NFILTER")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def ewb_clear_nfilter_request(self, timeout: float = 5.0) -> int:
+    async def ewb_clear_nfilter_request(self, timeout: float = 5.0) -> int:
         """Clear EWB filter."""
         irp = IRP(function=FunctionCode.EWB_CLEAR_NFILTER, params=b"")
         req = self._create_request(irp, 1, 3, "EWB_CLEAR_NFILTER")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def ewb_join_device_request(
+    async def ewb_join_device_request(
         self, gateway: bytes, timeout: float = 30.0
     ) -> tuple[int, int, bytes]:
         """Join EWB device."""
@@ -1627,7 +1630,7 @@ class RxModule:
         req = self._create_request(irp, 17, 20, "EWB_JOIN_DEVICE")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_JOIN_DEVICE)
@@ -1636,7 +1639,7 @@ class RxModule:
             return req.icp.result, device_type, receiver
         return req.icp.result, 0, bytes(16)
 
-    def ewb_remove_device_request(
+    async def ewb_remove_device_request(
         self, gateway: bytes, receiver: bytes, timeout: float = 5.0
     ) -> int:
         """Remove EWB device."""
@@ -1645,17 +1648,17 @@ class RxModule:
         req = self._create_request(irp, 33, 3, "EWB_REMOVE_DEVICE")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def ewb_rcv_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
+    async def ewb_rcv_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
         """Receive EWB telegram."""
         irp = IRP(function=FunctionCode.EWB_RCV, params=b"")
         req = self._create_request(irp, 1, 28, "EWB_RCV")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_RCV)
@@ -1665,7 +1668,7 @@ class RxModule:
             return req.icp.result, info_type, receiver_transmitter, info_data
         return req.icp.result, 0, bytes(16), bytes(8)
 
-    def ewb_change_state_request(
+    async def ewb_change_state_request(
         self,
         gateway: bytes,
         receiver: bytes,
@@ -1684,7 +1687,7 @@ class RxModule:
         req = self._create_request(irp, 38, 8, "EWB_CHANGE_STATE")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_CHANGE_STATE)
@@ -1693,7 +1696,7 @@ class RxModule:
             return req.icp.result, recent_mode, recent_state
         return req.icp.result, 0, bytes(4)
 
-    def ewb_query_state_request(
+    async def ewb_query_state_request(
         self,
         gateway: bytes,
         receiver: bytes,
@@ -1701,12 +1704,14 @@ class RxModule:
         timeout: float = 5.0,
     ) -> tuple[int, int, bytes]:
         """Query EWB device state."""
-        params = encode_serial_array(gateway) + encode_serial_array(receiver) + bytes([desired_mode])
+        params = (
+            encode_serial_array(gateway) + encode_serial_array(receiver) + bytes([desired_mode])
+        )
         irp = IRP(function=FunctionCode.EWB_QUERY_STATE, params=params)
         req = self._create_request(irp, 34, 8, "EWB_QUERY_STATE")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_QUERY_STATE)
@@ -1715,7 +1720,7 @@ class RxModule:
             return req.icp.result, recent_mode, state
         return req.icp.result, 0, bytes(4)
 
-    def ewb_tr_lrn_control_request(
+    async def ewb_tr_lrn_control_request(
         self,
         gateway: bytes,
         receiver: bytes,
@@ -1735,7 +1740,7 @@ class RxModule:
         req = self._create_request(irp, 39, 8, "EWB_TRLRN_CONTROL")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_TRLRN_CONTROL)
@@ -1748,9 +1753,11 @@ class RxModule:
     # SECURITY API FUNCTIONS
     # ================================================================================================
 
-    def sec_rcv_request(self, timeout: float = 30.0) -> tuple[int, int, int, int, int, int, int]:
+    async def sec_rcv_request(
+        self, timeout: float = 30.0
+    ) -> tuple[int, int, int, int, int, int, int]:
         """Receive Secwave security telegram.
-        
+
         Returns:
             (result, stor_index, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
         """
@@ -1758,7 +1765,7 @@ class RxModule:
         req = self._create_request(irp, 1, 16, "SEC_RCV")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_RCV)
@@ -1771,15 +1778,15 @@ class RxModule:
             return req.icp.result, stor_index, sec_query, sec_cmd, user_data, sec_flags, lrn_tel
         return req.icp.result, 0, 0, 0, 0, 0, 0
 
-    def sec_learn_request(
+    async def sec_learn_request(
         self, stor_index: int, timeout: float = 30.0
     ) -> tuple[int, int, int, int, int, int]:
         """Learn/program Secwave security storage entry.
-        
+
         Args:
             stor_index: Storage index for the security entry (0-65535)
             timeout: Request timeout in seconds
-            
+
         Returns:
             (result, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
         """
@@ -1788,7 +1795,7 @@ class RxModule:
         req = self._create_request(irp, 3, 16, "SEC_LEARN")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_LEARN)
@@ -1800,13 +1807,15 @@ class RxModule:
             return req.icp.result, sec_query, sec_cmd, user_data, sec_flags, lrn_tel
         return req.icp.result, 0, 0, 0, 0, 0
 
-    def sec_stat_request(self, stor_index: int, timeout: float = 5.0) -> tuple[int, bool, int]:
+    async def sec_stat_request(
+        self, stor_index: int, timeout: float = 5.0
+    ) -> tuple[int, bool, int]:
         """Query Secwave security storage entry status.
-        
+
         Args:
             stor_index: Storage index (0-65535)
             timeout: Request timeout in seconds
-            
+
         Returns:
             (result, is_used, user_data)
         """
@@ -1815,7 +1824,7 @@ class RxModule:
         req = self._create_request(irp, 3, 8, "SEC_STAT")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_STAT)
@@ -1824,13 +1833,13 @@ class RxModule:
             return req.icp.result, is_used, user_data
         return req.icp.result, False, 0
 
-    def sec_delete_request(self, stor_index: int, timeout: float = 5.0) -> int:
+    async def sec_delete_request(self, stor_index: int, timeout: float = 5.0) -> int:
         """Delete Secwave security storage entry.
-        
+
         Args:
             stor_index: Storage index to delete (0-65535)
             timeout: Request timeout in seconds
-            
+
         Returns:
             Error code
         """
@@ -1839,16 +1848,16 @@ class RxModule:
         req = self._create_request(irp, 3, 8, "SEC_DELETE")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def sec_delete_all_request(self, timeout: float = 5.0) -> int:
+    async def sec_delete_all_request(self, timeout: float = 5.0) -> int:
         """Delete all Secwave security storage entries (factory reset).
-        
+
         Args:
             timeout: Request timeout in seconds
-            
+
         Returns:
             Error code
         """
@@ -1856,19 +1865,19 @@ class RxModule:
         req = self._create_request(irp, 1, 3, "SEC_DELETE_ALL")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def sec_reply_query_request(
+    async def sec_reply_query_request(
         self, stor_index: int, timeout: float = 5.0
     ) -> tuple[int, int, int]:
         """Query Secwave security reply parameters.
-        
+
         Args:
             stor_index: Storage index (0-65535)
             timeout: Request timeout in seconds
-            
+
         Returns:
             (result, sys_state, app_state)
         """
@@ -1877,7 +1886,7 @@ class RxModule:
         req = self._create_request(irp, 3, 8, "SEC_REPLY_QUERY")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_REPLY_QUERY)
@@ -1886,16 +1895,16 @@ class RxModule:
             return req.icp.result, sys_state, app_state
         return req.icp.result, 0, 0
 
-    def sec_wr_userdata_request(
+    async def sec_wr_userdata_request(
         self, stor_index: int, user_data: int, timeout: float = 5.0
     ) -> int:
         """Write user data to Secwave security storage entry.
-        
+
         Args:
             stor_index: Storage index (0-65535)
             user_data: 32-bit user data to write
             timeout: Request timeout in seconds
-            
+
         Returns:
             Error code
         """
@@ -1904,21 +1913,21 @@ class RxModule:
         req = self._create_request(irp, 7, 3, "SEC_WR_USERDATA")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def sec_send_cmd_tel_request(
+    async def sec_send_cmd_tel_request(
         self, stor_index: int, sys_state: int, app_state: int, timeout: float = 5.0
     ) -> int:
         """Send Secwave command telegram.
-        
+
         Args:
             stor_index: Storage index (0-65535)
             sys_state: System state parameter
             app_state: Application state parameter
             timeout: Request timeout in seconds
-            
+
         Returns:
             Error code
         """
@@ -1927,21 +1936,21 @@ class RxModule:
         req = self._create_request(irp, 7, 3, "SEC_SEND_CMD_TEL")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result
 
-    def sec_send_lrn_tel_request(
+    async def sec_send_lrn_tel_request(
         self, stor_index: int, sys_state: int, app_state: int, timeout: float = 5.0
     ) -> int:
         """Send Secwave learn/training telegram.
-        
+
         Args:
             stor_index: Storage index (0-65535)
             sys_state: System state parameter
             app_state: Application state parameter
             timeout: Request timeout in seconds
-            
+
         Returns:
             Error code
         """
@@ -1950,6 +1959,6 @@ class RxModule:
         req = self._create_request(irp, 7, 3, "SEC_SEND_LRN_TEL")
 
         self._place_request(req)
-        req.wait(timeout)
+        await req.wait(timeout)
 
         return req.icp.result

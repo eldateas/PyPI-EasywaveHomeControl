@@ -9,29 +9,27 @@ This example demonstrates:
 - Serial communication at 57600 baud
 """
 
-import sys
 import logging
+import sys
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from easywave_rx_module.registry import DeviceFactory
-from easywave_rx_module.protocols.rx09 import RX09Device
 
 # Setup logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 _LOGGER = logging.getLogger(__name__)
 
 
 def test_rx09() -> None:
     """Test RX09 device with ASCII text protocol."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("🧪 RX09 Test Device (Different Protocol Family - ASCII Text)")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     try:
         # Create RX09 device
@@ -53,7 +51,7 @@ def test_rx09() -> None:
         │ Feature             │   RxModule   │    RX09      │
         ├─────────────────────┼──────────────┼──────────────┤
         │ Protocol Type       │ Binary       │ ASCII Text   │
-        │ Baudrate            │ 38400/9600   │ 57600        │
+        │ Baudrate            │ 115200       │ 57600        │
         │ Frame Format        │ Binary SOP   │ CSV with CR  │
         │ Commands            │ 25 functions │ 11 functions │
         │ EasyWave Basic      │ ✓            │ ✓            │
@@ -66,43 +64,43 @@ def test_rx09() -> None:
         # Get available functions
         print("📋 RX09 Available Functions (11 total):")
         functions = device.get_available_functions()
-        
-        print(f"   System Functions:")
-        sys_funcs = ['ping', 'get_device_id', 'query_positions']
+
+        print("   System Functions:")
+        sys_funcs = ["ping", "get_device_id", "query_positions"]
         for func in sys_funcs:
             if func in functions:
                 print(f"      • {func:30} - {functions[func]}")
-        
-        print(f"\n   Position Management:")
-        pos_funcs = ['read_position_data']
+
+        print("\n   Position Management:")
+        pos_funcs = ["read_position_data"]
         for func in pos_funcs:
             if func in functions:
                 print(f"      • {func:30} - {functions[func]}")
-        
-        print(f"\n   Transmission:")
-        tx_funcs = ['send_telegramm', 'receive_telegramm']
+
+        print("\n   Transmission:")
+        tx_funcs = ["send_telegramm", "receive_telegramm"]
         for func in tx_funcs:
             if func in functions:
                 print(f"      • {func:30} - {functions[func]}")
-        
-        print(f"\n   Status & Control:")
-        status_funcs = ['query_echo', 'set_echo', 'query_led', 'set_led', 'query_button']
+
+        print("\n   Status & Control:")
+        status_funcs = ["query_echo", "set_echo", "query_led", "set_led", "query_button"]
         for func in sorted(status_funcs):
             if func in functions:
                 print(f"      • {func:30} - {functions[func]}")
-        
+
         print(f"\n   Total: {len(functions)} RX09-specific functions\n")
 
         # Show protocol specifics
         print("🔧 Protocol Details:")
-        print(f"   • Commands: Comma-separated ASCII text")
-        print(f"   • Terminator: CR (0x0D)")
-        print(f"   • Format: COMMAND,PARAM1,PARAM2,...")
-        print(f"   • Responses: 'OK' / 'ERROR' or data (e.g., 'ID,1234,5678')")
-        print(f"   • Special Cases:")
-        print(f"      - Escape sequence: \\ for comma and backslash")
-        print(f"      - Hex values: 22-bit serial numbers, positions")
-        print(f"      - Button codes: 'A', 'B', 'C', 'D'")
+        print("   • Commands: Comma-separated ASCII text")
+        print("   • Terminator: CR (0x0D)")
+        print("   • Format: COMMAND,PARAM1,PARAM2,...")
+        print("   • Responses: 'OK' / 'ERROR' or data (e.g., 'ID,1234,5678')")
+        print("   • Special Cases:")
+        print("      - Escape sequence: \\ for comma and backslash")
+        print("      - Hex values: 22-bit serial numbers, positions")
+        print("      - Button codes: 'A', 'B', 'C', 'D'")
         print()
 
         # Test ping
@@ -110,9 +108,9 @@ def test_rx09() -> None:
         try:
             result = device.ping_request(timeout=5.0)
             if result:
-                print(f"✓ Device ping successful")
+                print("✓ Device ping successful")
             else:
-                print(f"⚠️  Device ping timeout (device not connected)")
+                print("⚠️  Device ping timeout (device not connected)")
         except Exception as e:
             print(f"⚠️  Device not connected: {e}")
 
@@ -147,9 +145,9 @@ def test_rx09() -> None:
         Response: OK or ERROR
         """)
 
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("✓ RX09 Test Device ready (ASCII Text Protocol)")
-        print("="*80 + "\n")
+        print("=" * 80 + "\n")
 
     except ValueError as e:
         print(f"❌ Error: {e}")
