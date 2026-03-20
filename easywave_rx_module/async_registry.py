@@ -1,183 +1,202 @@
-"""Async factory for creating EASYWAVE RX device instances.
+"""Async device factory for Home Assistant integration.
 
-Provides AsyncDeviceFactory.create() which returns async-enabled device
-wrappers suitable for Home Assistant and other async frameworks.
-
-This is the PRIMARY entry point for Home Assistant integration.
+Simplified factory that creates pure async devices.
+No ThreadPoolExecutor wrapper - direct asyncio implementation.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
-from .async_devices import AsyncDeviceBase, AsyncRxModuleDevice, AsyncRX09Device
-from .protocols.rx09.devices import RX09Device
-from .protocols.rx11_rx2x.devices import RX11Device, RX21Device, RX22Device, RX25Device
-from .registry import DeviceRegistry
+from .protocols.async_base import AsyncBaseProtocol
+from .protocols.rx09 import AsyncRX09Device
+from .protocols.rx11_rx2x import (
+    AsyncRX11Device,
+    AsyncRX21Device,
+    AsyncRX22Device,
+    AsyncRX25Device,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-# Device type definitions
-RX_DEVICE_ID = Literal[
+# Device type aliases
+ASYNC_DEVICE_ID = Literal[
     "RX11",
     "RX11-BASIC",
-    "RX11-DEFAULT",
+    "RX11-EW",
+    "RX11-DEV",
     "RX21",
     "RX21-BASIC",
-    "RX21-DEFAULT",
+    "RX21-EW",
+    "RX21-DEV",
     "RX22",
     "RX22-BASIC",
-    "RX22-DEFAULT",
     "RX22-EW",
     "RX22-DEV",
     "RX25",
     "RX25-BASIC",
-    "RX25-DEFAULT",
+    "RX25-EW",
+    "RX25-DEV",
     "RX09",
     "RX09-BASIC",
 ]
 
+# Device registry
+_DEVICE_REGISTRY: dict[str, type[AsyncBaseProtocol]] = {
+    # RX11
+    "RX11": AsyncRX11Device,
+    # RX21
+    "RX21": AsyncRX21Device,
+    # RX22
+    "RX22": AsyncRX22Device,
+    # RX25
+    "RX25": AsyncRX25Device,
+    # RX09
+    "RX09": AsyncRX09Device,
+}
+
 
 class AsyncDeviceFactory:
-    """Factory for creating async-enabled EASYWAVE RX devices.
+    """Factory for creating pure async EASYWAVE devices.
 
-    All devices created by this factory support async/await and will not
-    block the event loop during serial I/O operations. This is the
-    recommended API for Home Assistant integration.
+    Direct asyncio implementation - no thread pool wrapper.
+    Primary API for Home Assistant integration.
 
-    Example HA integration:
+    Example (HA integration):
         ```python
         from easywave_rx_module import AsyncDeviceFactory
 
-        # In HA async setup
+        # Simple and clean
         device = await AsyncDeviceFactory.create(
             "RX22",
-            port="/dev/ttyAMA0",
-            timeout=5.0
+            port="/dev/ttyAMA0"  # Raspberry Pi serial
         )
 
-        # Use async methods - never blocks
+        # Use device
         info = await device.get_device_info()
-        success = await device.ping_request(timeout=3.0)
+        connected = await device.ping_request(timeout=3.0)
+        await device.disconnect()
         ```
     """
 
     @staticmethod
     async def create(
-        device_id: RX_DEVICE_ID,
+        device_id: ASYNC_DEVICE_ID,
         port: str,
         timeout: float = 5.0,
         variant: str | None = None,
-        executor: ThreadPoolExecutor | None = None,
-    ) -> AsyncDeviceBase:
-        """Create an async-enabled device instance.
+    ) -> AsyncBaseProtocol:
+        """Create an async device instance.
 
         Args:
-            device_id: Device type identifier (e.g., "RX22", "RX09")
-            port: Serial port path (e.g., "/dev/ttyAMA0", "COM3")
-            timeout: Request timeout in seconds (used as default for operations)
-            variant: Protocol variant (e.g., "ew", "dev") - optional
-            executor: Custom ThreadPoolExecutor for operations
+            device_id: Device type (e.g., "RX22", "RX09")
+            port: Serial port path (e.g., "/dev/ttyAMA0")
+            timeout: Default timeout for device operations
+            variant: Device variant (optional, inferred from device_id)
 
         Returns:
-            Async wrapper device instance (AsyncRxModuleDevice or AsyncRX09Device)
+            Async device instance ready to use
 
         Raises:
             ValueError: If device_id is unknown
-            serial.SerialException: If port cannot be opened
 
         Example:
             ```python
-            # RX22 on Raspberry Pi serial port
+            # RX22 on Raspberry Pi
             device = await AsyncDeviceFactory.create(
                 "RX22",
                 port="/dev/ttyAMA0",
-                timeout=10.0
+                timeout=5.0
             )
 
-            # RX11 USB transceiver
+            # RX11 USB
             device = await AsyncDeviceFactory.create(
                 "RX11",
                 port="/dev/ttyUSB0"
             )
 
-            # RX09 ASCII basic receiver
+            # RX09 ASCII protocol
             device = await AsyncDeviceFactory.create(
                 "RX09",
                 port="/dev/ttyUSB1"
             )
             ```
         """
-        loop = asyncio.get_event_loop()
+        device_id_upper = device_id.upper()
 
-        # Get the synchronous device class from registry
-        device_class = DeviceRegistry.get_device_class(device_id)
+        # Parse variant from device ID if present
+        if variant is None and "-" in device_id_upper:
+            _, variant = device_id_upper.split("-", 1)
+
+        # Get device class
+        device_class = _DEVICE_REGISTRY.get(device_id_upper)
 
         if device_class is None:
-            available = DeviceRegistry.get_supported_devices()
+            supported = list(_DEVICE_REGISTRY.keys())
             raise ValueError(
                 f"Unknown device: {device_id}. "
-                f"Supported devices: {', '.join(available)}"
+                f"Supported: {', '.join(sorted(set(d.split('-')[0] for d in supported)))}"
             )
 
-        # Create sync device in executor to avoid blocking
-        def create_sync_device():
-            return device_class(
-                port=port,
-                baudrate=None,  # Use device defaults
-                timeout=timeout,
-                variant=variant
-            )
+        # Create device instance
+        device = device_class(
+            port=port,
+            timeout=timeout,
+            variant=variant,
+        )
 
-        sync_device = await loop.run_in_executor(None, create_sync_device)
+        # Connect to device
+        try:
+            if not await device.connect():
+                raise RuntimeError(f"Failed to connect to {device_id} on {port}")
+        except Exception as e:
+            _LOGGER.error("Device connection error: %s", e)
+            raise
 
-        # Wrap in appropriate async wrapper
-        if isinstance(sync_device, RX09Device):
-            return AsyncRX09Device(sync_device, executor, loop)
-        elif isinstance(sync_device, (RX11Device, RX21Device, RX22Device, RX25Device)):
-            return AsyncRxModuleDevice(sync_device, executor, loop)
-        else:
-            raise TypeError(f"Unknown device type: {type(sync_device)}")
+        return device
 
     @staticmethod
     def get_supported_devices() -> list[str]:
-        """Get list of all supported device IDs.
+        """Get list of supported device IDs.
 
         Returns:
-            List of device ID strings
+            List of device type identifiers
 
         Example:
             ```python
             devices = AsyncDeviceFactory.get_supported_devices()
-            # ['RX11', 'RX21', 'RX22', 'RX25', 'RX09', ...]
+            # ['RX11', 'RX11-BASIC', 'RX11-EW', ..., 'RX09', 'RX09-BASIC']
             ```
         """
-        return DeviceRegistry.list()
+        return list(_DEVICE_REGISTRY.keys())
 
     @staticmethod
     def get_device_variants(device_id: str) -> list[str]:
-        """Get available variants for a device.
+        """Get variants for a specific device type.
 
         Args:
-            device_id: Device type identifier (e.g., "RX22")
+            device_id: Device type (e.g., "RX22")
 
         Returns:
-            List of variant strings (e.g., ["BASIC", "EW", "DEV"])
+            List of variant identifiers
 
         Example:
             ```python
             variants = AsyncDeviceFactory.get_device_variants("RX22")
-            # ["BASIC", "EW", "DEV", "DEFAULT"]
+            # ['BASIC', 'EW', 'DEV']  (and DEFAULT)
             ```
         """
-        all_variants = DeviceRegistry.get_supported_variants()
         device_id_upper = device_id.upper()
-        
-        # Remove variant suffix if present (e.g., "RX22-EW" -> "RX22")
+
+        # Extract base device type
         if "-" in device_id_upper:
-            device_id_upper = device_id_upper.split("-")[0]
-        
-        return all_variants.get(device_id_upper, [])
+            base_type = device_id_upper.split("-")[0]
+        else:
+            base_type = device_id_upper
+
+        # Find all variants for this base type
+        variants = {k.split("-")[1] for k in _DEVICE_REGISTRY.keys() if k.startswith(base_type + "-")}
+
+        return sorted(variants)

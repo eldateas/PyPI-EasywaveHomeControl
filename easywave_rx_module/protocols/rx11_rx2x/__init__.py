@@ -9,7 +9,19 @@ Device Types:
     RX25: Serial Module (38400 bps, high-speed)
 """
 
+# Sync devices (legacy, will be removed)
 from .devices import RX11Device, RX21Device, RX22Device, RX25Device, RxModuleDevice
+
+# Async devices (primary API for Home Assistant)
+from .async_devices import (
+    AsyncRX11Device,
+    AsyncRX21Device,
+    AsyncRX22Device,
+    AsyncRX25Device,
+    AsyncRxModuleDevice,
+)
+from .async_protocol import AsyncRxModule
+
 from .protocol import (
     CANCEL_ALL_IO,
     CANCEL_IO,
