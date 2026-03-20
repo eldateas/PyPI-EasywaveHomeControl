@@ -1,15 +1,17 @@
-# EASYWAVE RX11 Hardware Communication Library
+# EASYWAVE RX Module Library
 
-Pure Python implementation of the RxModule protocol for communicating with EASYWAVE RX11 USB transceivers.
+Pure Python async/await implementation for communicating with EASYWAVE radio modules (RX11, RX21, RX22, RX25, RX09).
+
+Optimized for **Home Assistant integration** with 100% non-blocking async API.
 
 ## Features
 
-- **Pure Python** - No C extensions, cross-platform compatible
-- **Async Ready** - Thread-safe design, callbacks for state changes
-- **Robust** - Comprehensive error handling, health checks, automatic reconnection support
-- **Protocol Implementation** - Full RxModule packet encoding/decoding with byte stuffing
-- **Health Monitoring** - Connection health checks, hardware error detection
-- **Clean API** - Easy-to-use interface for hardware/firmware version queries and device control
+- **Pure Async/Await** - No blocking calls on event loop, optimized for Home Assistant
+- **Multi-Family Support** - Binary protocol (RX11/21/22/25) + ASCII protocol (RX09)
+- **High Performance** - 115200 baud communication, request pipelining
+- **Robust** - Comprehensive error handling, health checks, timeout management
+- **Clean API** - Simple async factory pattern for device creation
+- **Type Hints** - Full TypeScript-style type annotations
 
 ## Installation
 
@@ -17,86 +19,117 @@ Pure Python implementation of the RxModule protocol for communicating with EASYW
 pip install easywave-rx-module
 ```
 
-## Quick Start
+## Important: Always Call disconnect()
+
+The `AsyncDeviceFactory.create()` method automatically calls `connect()` internally, but **you must always call `await device.disconnect()`** when done:
 
 ```python
-from easywave_rx_module import RxModule
-
-# Create module instance
-rx = RxModule(port="/dev/ttyACM0")
-
-# Connect to device
-if not rx.connect():
-    print("Failed to connect")
-    exit(1)
-
-# Query hardware version
-result, hw_ver = rx.query_hw_version(timeout=5.0)
-print(f"Hardware version: {hw_ver}")
-
-# Query firmware version
-result, major, minor, incomplete = rx.query_fw_version(timeout=5.0)
-print(f"Firmware: {major}.{minor}")
-
-# Cleanup
-rx.dispose()
+try:
+    device = await AsyncDeviceFactory.create("RX22", port="/dev/ttyAMA0")
+    # ... use device ...
+finally:
+    await device.disconnect()  # Always cleanup!
 ```
 
-## API Documentation
-
-### RxModule Class
-
-Main class for communicating with EASYWAVE RX11 devices.
-
-#### Constructor
+## Quick Start (Async API)
 
 ```python
-RxModule(port: str, baudrate: int = 115200)
+import asyncio
+from easywave_rx_module import AsyncDeviceFactory
+
+async def main():
+    # Create and connect to device (both in one call)
+    device = await AsyncDeviceFactory.create(
+        "RX22",
+        port="/dev/ttyAMA0",  # Raspberry Pi UART
+        timeout=5.0
+    )
+    
+    # Get device info
+    info = await device.get_device_info()
+    print(f"Device: {info}")
+    
+    # Check connectivity
+    connected = await device.ping_request(timeout=3.0)
+    print(f"Connected: {connected}")
+    
+    # Always disconnect when done!
+    await device.disconnect()
+
+asyncio.run(main())
 ```
 
-- **port**: Serial port path (e.g., "/dev/ttyACM0" on Linux, "COM3" on Windows)
-- **baudrate**: Serial baudrate (default: 115200)
+## Device Support
 
-#### Connection Methods
+### RxModule Family (Binary Protocol, 115200 baud)
+
+| Device | Type | Functions | Features | Baudrate |
+|--------|------|-----------|----------|----------|
+| **RX11** | USB Transceiver | 25 | EW, Bidi, Secwave | 115200 |
+| **RX21** | Serial Module | 25 | EW, Bidi, Secwave | 115200 |
+| **RX22** | Serial Enhanced | 25 | EW, Bidi, Secwave | 115200 |
+| **RX25** | Serial High-Speed | 25 | EW, Bidi, Secwave | 115200 |
+
+### RX09 Family (ASCII Protocol, 57600 baud)
+
+| Device | Type | Functions | Features | Baudrate |
+|--------|------|-----------|----------|----------|
+| **RX09** | Basic Receiver | 11 | EW Basic only | 57600 |
+
+## Async API Documentation
+
+### AsyncDeviceFactory
+
+Factory for creating async device instances.
+
+#### Creating Devices
 
 ```python
-connect() -> bool
+device = await AsyncDeviceFactory.create(
+    device_id="RX22",        # Device type
+    port="/dev/ttyAMA0",      # Serial port
+    timeout=5.0,              # Default timeout
+    variant="EW"              # Optional variant
+)
 ```
-Connect to the RX11 device. Returns `True` on success.
+
+**Supported Device IDs:**
+- RxModule: `RX11`, `RX21`, `RX22`, `RX25`
+- RX09: `RX09`, `RX09-BASIC`
+
+#### Device Methods
+
+All devices inherit from `AsyncBaseProtocol` with these methods:
 
 ```python
-dispose()
-```
-Disconnect and cleanup resources. Safe to call multiple times.
+# Connection
+await device.connect() -> bool        # Usually called automatically
+await device.disconnect()              # Required: cleanup on shutdown
 
-#### Query Methods
+# Info
+await device.ping_request(timeout=5.0) -> bool
+await device.get_device_info()         # Returns dict with type, port, baudrate
+await device.get_available_functions() # Returns dict of available functions
+```
+
+**RxModule-specific (RX11/21/22/25):**
 
 ```python
-query_hw_version(timeout: float = 5.0) -> tuple[int, bytes]
+await device.query_hw_version() -> tuple[int, str]
+await device.query_fw_version() -> tuple[int, str]
+await device.ew_send_cmd_request(gateway_id, button) -> tuple[int, bytes]
+await device.ew_rcv_button_request() -> tuple[int, bytes]
 ```
-Query hardware version. Returns error code and hardware version bytes.
+
+**RX09-specific:**
 
 ```python
-query_fw_version(timeout: float = 5.0) -> tuple[int, int, int, bool]
+await device.get_device_id()          # Device identification
+await device.query_positions()        # Number of positions
+await device.send_telegramm(pos, button)  # Send telegram
+await device.query_led() -> bool      # LED status
+await device.set_led(enabled)         # Control LED
 ```
-Query firmware version. Returns error code, major version, minor version, and incomplete flag.
-
-```python
-ping(duration: int = 5) -> int
-```
-Ping the device. Returns error code.
-
-#### Properties
-
-```python
-is_connected: bool
-```
-Check if device is connected and healthy.
-
-```python
-connection_status: str
-```
-Get detailed connection status ("connected", "disconnected", "reconnecting", "hardware_error", "error").
 
 ```python
 has_hardware_error: bool

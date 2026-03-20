@@ -29,14 +29,15 @@ async def main():
 
     device = None
     try:
-        # 1. Create device asynchronously
-        print("📱 Creating RX22 device...")
+        # 1. Create and connect to device
+        # Note: AsyncDeviceFactory.create() calls connect() internally!
+        print("📱 Creating RX22 device (with auto-connect)...")
         device = await AsyncDeviceFactory.create(
             "RX22",
             port="/dev/ttyUSB0",  # or "/dev/ttyAMA0" for Raspberry Pi
             timeout=5.0
         )
-        print("✓ Device created\n")
+        print("✓ Device created and connected\n")
 
         # 2. Get device info
         print("ℹ️  Device Information:")
@@ -76,6 +77,7 @@ async def main():
     finally:
         if device:
             print("🔌 Disconnecting...")
+            # IMPORTANT: Always disconnect when done!
             await device.disconnect()
             print("✓ Disconnected\n")
 
