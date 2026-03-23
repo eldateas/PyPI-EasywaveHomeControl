@@ -125,6 +125,7 @@ if result == RX09Device.ErrorCode.SUCCESS:
 
 ```python
 # Connection management
+# Note: .connect() is called automatically by .create() — only needed for direct instantiation
 await device.connect() -> bool
 await device.disconnect() -> None
 
@@ -132,11 +133,18 @@ await device.disconnect() -> None
 await device.get_device_info() -> dict[str, Any]
 await device.ping_request(timeout=5.0) -> bool
 
-# Properties
+# Properties (common)
 device.is_connected -> bool
-device.connection_status -> str  # "connected", "reconnecting", "error"
-device.last_error -> str | None
-device.has_hardware_error -> bool
+```
+
+#### RxModule-Only Properties (RX11 / RX21 / RX22 / RX25)
+
+```python
+# Detailed status — one of: "connected", "disconnected", "reconnecting", "error", "hardware_error"
+device.connection_status -> str
+device.has_hardware_error -> bool  # True after USB disconnect or I/O error
+device.state_good -> bool          # False if protocol errors have occurred
+device.last_error -> str | None    # Last error message, if any
 ```
 
 ### Error Codes

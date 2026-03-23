@@ -175,6 +175,7 @@ device = await RX09Device.create(port="/dev/ttyUSB1")
 
 ```python
 # Connection
+# Note: .connect() is called automatically by .create() — only needed for direct instantiation
 await device.connect() -> bool
 await device.disconnect() -> None
 
@@ -182,7 +183,17 @@ await device.disconnect() -> None
 await device.ping_request(timeout=5.0) -> bool
 await device.get_device_info() -> dict[str, Any]
 
-# RxModule-specific
+# Properties (common to all devices)
+device.is_connected -> bool
+
+# RxModule-only properties (RX11 / RX21 / RX22 / RX25)
+# connection_status is one of: "connected", "disconnected", "reconnecting", "error", "hardware_error"
+device.connection_status -> str
+device.has_hardware_error -> bool
+device.state_good -> bool
+device.last_error -> str | None
+
+# RxModule-specific commands
 result, hw_version = await device.query_hw_version()
 result, fw_version = await device.query_fw_version()
 
