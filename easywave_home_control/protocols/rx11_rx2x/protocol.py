@@ -667,6 +667,10 @@ class RxModule:
                 write_timeout=1.0,
             )
 
+            # Start serial handler thread IMMEDIATELY before any communication
+            self._shutdown_requested = False
+            self._serial_handler_task = asyncio.create_task(self._serial_handler())
+
             # Reset state
             self._reset_queues()
             await self.cancel_all_io_requests()
@@ -710,9 +714,6 @@ class RxModule:
                 self._last_error = None
                 self._last_successful_communication = time.time()
                 self._reconnect_attempts = 0
-
-            # Start serial handler thread
-            self._serial_handler_task = asyncio.create_task(self._serial_handler())
 
             self._connected = True
         except _SERIAL_ERRORS:
@@ -1422,13 +1423,20 @@ class RxModule:
             return req.icp.result, major, minor, incomplete
         return req.icp.result, 0, 0, False
 
-    async def ping(self, duration: int = 5) -> int:
-        """Ping the module."""
+    async def ping(self, timeout: float = 5.0) -> int:
+        """Ping the module.
+
+        Args:
+            timeout: Timeout in seconds
+
+        Returns:
+            ErrorCode.SUCCESS (0) if ping succeeds, ErrorCode.ERR_RF_TIMEOUT if timeout
+        """
         irp = IRP(function=FunctionCode.PING_RCV, params=b"")
         req = self._create_request(irp, 1, 3, "PING_RCV")
 
         self._place_request(req)
-        if not await req.wait(duration):
+        if not await self._wait_for_request(req, timeout):
             return ErrorCode.ERR_RF_TIMEOUT
 
         return req.icp.result

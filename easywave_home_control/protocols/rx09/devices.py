@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from ...protocols.base import BaseProtocol
-from .protocol import RX09Protocol, ErrorCode
+from .protocol import ErrorCode, RX09Protocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,8 +34,8 @@ class RX09Device(RX09Protocol, BaseProtocol):
         async def main():
             device = await RX09Device.create(port='/dev/ttyUSB0')
             try:
-                result = await device.ping_request()
-                if result and result == RX09Device.ErrorCode.SUCCESS:
+                connected = await device.ping_request()
+                if connected:
                     print("Device connected")
             finally:
                 await device.disconnect()

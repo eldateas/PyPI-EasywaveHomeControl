@@ -103,7 +103,7 @@ class RxModuleDevice(RxModule, BaseProtocol):
         Returns:
             True if device responded successfully, False otherwise
         """
-        result = await self.ping(int(timeout))
+        result = await self.ping(timeout)
         return result == 0
 
     async def disconnect(self) -> None:
