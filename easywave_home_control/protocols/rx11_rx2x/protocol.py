@@ -551,7 +551,7 @@ class RxModule:
         self._protocol_lock = threading.RLock()
         self._file_lock = threading.Lock()
         self._serial_handler_ready = threading.Event()  # Signals when handler is actually running
-        self._serial_handler_task: asyncio.Task | None = None  # Set during connect()
+        self._serial_handler_task: asyncio.Task[None] | None = None  # Set during connect()
 
         # Send command loop (for dead man's switch)
         self._send_cmd_loop_task: asyncio.Task[None] | None = None
