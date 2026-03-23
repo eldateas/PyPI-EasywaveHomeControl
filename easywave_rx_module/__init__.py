@@ -30,10 +30,10 @@ from __future__ import annotations
 
 from .async_registry import AsyncDeviceFactory
 from .protocols.base import BaseProtocol
-from .protocols.rx11_rx2x.protocol import ErrorCode
 
 # RX09 family (ASCII protocol, pure async)
 from .protocols.rx09 import RX09Device, RX09Protocol
+from .protocols.rx09.protocol import ErrorCode as RX09ErrorCode
 
 # RxModule family (binary protocol, pure async)
 from .protocols.rx11_rx2x import (
@@ -44,6 +44,10 @@ from .protocols.rx11_rx2x import (
     RxModule,
     RxModuleDevice,
 )
+from .protocols.rx11_rx2x.protocol import ErrorCode as RX11ErrorCode
+
+# Backwards compatibility: Default ErrorCode is RX11/RxModule
+ErrorCode = RX11ErrorCode
 
 # ============================================================================
 # PRIMARY API: Async Factory (Home Assistant)
@@ -65,7 +69,10 @@ __all__ = [
     # Pure async API (primary)
     "BaseProtocol",
     "AsyncDeviceFactory",
-    "ErrorCode",
+    # ErrorCode - device-specific
+    "ErrorCode",  # Default (RX11/RxModule for backwards compatibility)
+    "RX11ErrorCode",
+    "RX09ErrorCode",
     # RxModule family devices
     "RxModule",
     "RxModuleDevice",

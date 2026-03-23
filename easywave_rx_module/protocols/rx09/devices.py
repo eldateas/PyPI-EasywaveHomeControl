@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from ...protocols.base import BaseProtocol
-from .protocol import RX09Protocol
+from .protocol import RX09Protocol, ErrorCode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,15 +29,14 @@ class RX09Device(RX09Protocol, BaseProtocol):
     Example:
         ```python
         import asyncio
-        from easywave_rx_module.protocols.rx09.devices import RX09Device
+        from easywave_rx_module import RX09Device
 
         async def main():
-            device = RX09Device('/dev/ttyUSB0')
-            await device.connect()
+            device = await RX09Device.create(port='/dev/ttyUSB0')
             try:
-                result, vendor_id, device_id, version = await device.get_device_id()
-                if result == 0:
-                    print(f"Device: {device_id:02X} Vendor: {vendor_id:02X} Version: {version:02X}")
+                result = await device.ping_request()
+                if result and result == RX09Device.ErrorCode.SUCCESS:
+                    print("Device connected")
             finally:
                 await device.disconnect()
 
@@ -48,6 +47,7 @@ class RX09Device(RX09Protocol, BaseProtocol):
     DEVICE_TYPE = "RX09"
     DEFAULT_BAUDRATE = 57600
     DEFAULT_VARIANT = "basic"
+    ErrorCode = ErrorCode  # Expose ErrorCode as class attribute
 
     def __init__(
         self,

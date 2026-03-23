@@ -22,11 +22,24 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from enum import IntEnum
 from typing import Any
 
 from ...protocols.base import BaseProtocol
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ErrorCode(IntEnum):
+    """Error codes for RX09 ASCII protocol operations."""
+
+    SUCCESS = 0x00
+    ERR_INVALID_COMMAND = 0x01
+    ERR_INVALID_POSITION = 0x02
+    ERR_SERIAL_NOT_FOUND = 0x03
+    ERR_TIMEOUT = 0x04
+    ERR_INVALID_PARAMETER = 0x05
+    ERR_DEVICE_ERROR = 0xFF
 
 
 class RX09Protocol(BaseProtocol):
@@ -63,7 +76,7 @@ class RX09Protocol(BaseProtocol):
         self._lock = asyncio.Lock()
 
         # Tasks
-        self._reader_task: asyncio.Task | None = None
+        self._reader_task: asyncio.Task[None] | None = None
 
         # State
         self._shutdown_requested = False
@@ -75,7 +88,7 @@ class RX09Protocol(BaseProtocol):
         self._device_num_positions = None
 
         # Callback system for spontaneous RCV messages
-        self._rcv_callbacks: list[Callable[[dict], None | object]] = []
+        self._rcv_callbacks: list[Callable[[dict[str, Any]], None | object]] = []
         self._callback_lock = asyncio.Lock()
 
     async def connect(self) -> bool:
@@ -307,18 +320,24 @@ class RX09Protocol(BaseProtocol):
         response = await self._send_and_receive(command, timeout=timeout)
         return 0 if response == "OK" else 1
 
-    async def receive_telegramm(self, timeout: float = 30.0) -> tuple[int, int | None, str | None]:
+    async def receive_telegramm(self, timeout: float | None = 30.0) -> tuple[int, int | None, str | None]:
         """Receive incoming telegramm (unsolicited).
 
         Args:
-            timeout: Receive timeout
+            timeout: Receive timeout in seconds. Use None for indefinite waiting.
 
         Returns:
             (result, serial_number, button_code) or (ERROR, None, None)
         """
         try:
             # This waits for unsolicited reception using background reader
-            result = await asyncio.wait_for(self._wait_for_rcv_message(), timeout=timeout)
+            if timeout is None:
+                # Indefinite waiting (no timeout)
+                result = await self._wait_for_rcv_message()
+            else:
+                # Timed waiting
+                result = await asyncio.wait_for(self._wait_for_rcv_message(), timeout=timeout)
+
             if result:
                 return 0, result.get("serial_number"), result.get("button_code")
             return 1, None, None
@@ -423,7 +442,7 @@ class RX09Protocol(BaseProtocol):
     # CALLBACK SUPPORT FOR SPONTANEOUS RCV MESSAGES
     # ================================================================================================
 
-    def register_rcv_callback(self, callback: Callable[[dict], None | object]) -> None:
+    def register_rcv_callback(self, callback: Callable[[dict[str, Any]], None | object]) -> None:
         """Register a callback for spontaneous RCV (receive) messages.
 
         The callback will be invoked asynchronously when a RCV message is received.
@@ -443,7 +462,7 @@ class RX09Protocol(BaseProtocol):
             self._rcv_callbacks.append(callback)
             _LOGGER.debug("RCV callback registered, total: %d", len(self._rcv_callbacks))
 
-    def unregister_rcv_callback(self, callback: Callable[[dict], None | object]) -> bool:
+    def unregister_rcv_callback(self, callback: Callable[[dict[str, Any]], None | object]) -> bool:
         """Unregister a previously registered RCV callback.
 
         Args:
@@ -465,7 +484,7 @@ class RX09Protocol(BaseProtocol):
         self._rcv_callbacks.clear()
         _LOGGER.debug("All RCV callbacks cleared")
 
-    async def _wait_for_rcv_message(self) -> dict | None:
+    async def _wait_for_rcv_message(self) -> dict[str, Any] | None:
         """Wait until a RCV message is received via callback queue.
 
         This is used internally by receive_telegramm() to wait for messages.
@@ -473,9 +492,9 @@ class RX09Protocol(BaseProtocol):
         Returns:
             Dictionary with serial_number and button_code, or None on timeout
         """
-        future: asyncio.Future[dict] = asyncio.Future()
+        future: asyncio.Future[dict[str, Any]] = asyncio.Future()
 
-        def temp_callback(data: dict) -> None:
+        def temp_callback(data: dict[str, Any]) -> None:
             if not future.done():
                 self.unregister_rcv_callback(temp_callback)
                 future.set_result(data)
@@ -487,7 +506,7 @@ class RX09Protocol(BaseProtocol):
             self.unregister_rcv_callback(temp_callback)
             raise
 
-    async def _invoke_rcv_callbacks(self, telegram_data: dict) -> None:
+    async def _invoke_rcv_callbacks(self, telegram_data: dict[str, Any]) -> None:
         """Invoke all registered RCV callbacks with telegram data.
 
         Args:
@@ -604,7 +623,7 @@ class RX09Protocol(BaseProtocol):
                                 _LOGGER.warning("Invalid serial number format: %s", serial_hex)
                                 continue
 
-                            telegram_data = {
+                            telegram_data: dict[str, Any] = {
                                 "serial_number": serial_number,
                                 "serial_hex": serial_hex,
                                 "button_code": button_code,

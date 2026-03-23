@@ -7,7 +7,9 @@ Pure async implementation using asyncio.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T", bound="BaseProtocol")
 
 
 class BaseProtocol(ABC):
@@ -16,6 +18,44 @@ class BaseProtocol(ABC):
     All device classes must inherit from this and implement these methods.
     This ensures consistent async/await interface across all device families.
     """
+
+    @classmethod
+    async def create(cls: type[T], port: str, **kwargs: Any) -> T:
+        """Create and connect device instance.
+
+        This factory method instantiates the device and connects it in one step.
+
+        Args:
+            port: Serial port path (e.g., "/dev/ttyUSB0")
+            **kwargs: Additional keyword arguments for device initialization
+                (timeout, variant, etc.)
+
+        Returns:
+            Connected device instance
+
+        Example:
+            >>> device = await RX11Device.create(port="/dev/ttyUSB0")
+            >>> # Device is already connected and ready to use
+            >>> info = await device.get_device_info()
+            >>> await device.disconnect()
+
+        Raises:
+            Exception: If connection fails or device is not found
+        """
+        device = cls(port, **kwargs)  # type: ignore[operator]
+        await device.connect()
+        return device
+
+    @abstractmethod
+    async def connect(self) -> bool:
+        """Connect to device asynchronously.
+
+        This method must be called before using any device operations.
+
+        Returns:
+            True if connection successful, False on failure
+        """
+        ...
 
     @abstractmethod
     async def ping_request(self, timeout: float = 5.0) -> bool:

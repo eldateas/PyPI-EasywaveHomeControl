@@ -14,9 +14,10 @@ Thread-safe with asyncio.Lock for concurrent access.
 
 # Primary async implementations (unified in protocol.py and devices.py)
 from .devices import RX09Device
-from .protocol import RX09Protocol
+from .protocol import RX09Protocol, ErrorCode
 
 __all__ = [
     "RX09Protocol",
     "RX09Device",
+    "ErrorCode",
 ]

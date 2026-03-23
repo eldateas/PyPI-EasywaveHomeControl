@@ -17,10 +17,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import serial
 import serial.tools.list_ports
+
+if TYPE_CHECKING:
+    pass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,12 +32,9 @@ try:  # termios is not available on all platforms (e.g., Windows)
 except ImportError:  # pragma: no cover - platform specific
     termios = None  # type: ignore[assignment]
 
-# Exception types raised by serial/termios operations.
-# In Python 3.14 termios.error no longer inherits from OSError,
-# so it must be caught explicitly when available.
 _SERIAL_ERRORS: tuple[type[Exception], ...] = (serial.SerialException, OSError)
 if termios is not None:
-    _SERIAL_ERRORS = (*_SERIAL_ERRORS, termios.error)
+    _SERIAL_ERRORS = (*_SERIAL_ERRORS, termios.error)  # type: ignore[arg-type]
 
 
 # ====================================================================================================
@@ -566,7 +566,7 @@ class RxModule:
         self._send_cmd_loop_drain = False  # Signal to drain remaining requests on stop
 
         # Send command loop statistics & error tracking
-        self._send_cmd_loop_stats = {
+        self._send_cmd_loop_stats: dict[str, Any] = {
             "sent": 0,  # Total commands sent
             "success": 0,  # Successful completions
             "errors": 0,  # Failed commands
@@ -713,7 +713,6 @@ class RxModule:
 
             # Start serial handler thread
             self._serial_handler_task = asyncio.create_task(self._serial_handler())
-            self._serial_handler_thread.start()
 
             self._connected = True
         except _SERIAL_ERRORS:
@@ -884,6 +883,72 @@ class RxModule:
                 self._dequeue_queued()
             else:
                 break
+
+    def _remove_request(self, req: Request) -> bool:
+        """Remove a request from queues or pending dict.
+        
+        Args:
+            req: Request to remove
+        
+        Returns:
+            True if request was found and removed, False otherwise
+        """
+        with self._protocol_lock:
+            # Try to remove from queued list
+            if self._tx_req_queued_size > 0:
+                front = self._tx_req_queued_front
+                for _ in range(self._tx_req_queued_size):
+                    idx = (front + _) % self.MAX_REQUEST_QUEUED
+                    if self._tx_req_queued[idx] is req:
+                        self._tx_req_queued[idx] = None
+                        # Adjust pointers if needed
+                        if idx == self._tx_req_queued_front:
+                            self._tx_req_queued_front = (self._tx_req_queued_front + 1) % self.MAX_REQUEST_QUEUED
+                        self._tx_req_queued_size -= 1
+                        return True
+            
+            # Try to remove from sent list
+            if self._tx_req_sent_size > 0:
+                front = self._tx_req_sent_front
+                for _ in range(self._tx_req_sent_size):
+                    idx = (front + _) % self.MAX_REQUEST_COUNT
+                    if self._tx_req_sent[idx] is req:
+                        self._tx_req_sent[idx] = None
+                        # Adjust pointers if needed
+                        if idx == self._tx_req_sent_front:
+                            self._tx_req_sent_front = (self._tx_req_sent_front + 1) % self.MAX_REQUEST_COUNT
+                        self._tx_req_sent_size -= 1
+                        return True
+            
+            # Try to remove from pending dict
+            if req.handle in self._req_pending:
+                del self._req_pending[req.handle]
+                return True
+        
+        return False
+
+    async def _wait_for_request(self, req: Request, timeout: float | None) -> bool:
+        """Wait for a request with proper timeout and cleanup.
+        
+        Args:
+            req: Request to wait for
+            timeout: Timeout in seconds, or None for indefinite waiting
+        
+        Returns:
+            True if request completed, False if timeout occurred
+        """
+        completed = await req.wait(timeout)
+        
+        if not completed:
+            # Timeout occurred - remove the request cleanly
+            _LOGGER.warning(
+                "Request '%s' timed out (%.1fs) - removing from queue",
+                req.req_str,
+                timeout if timeout is not None else -1,
+            )
+            self._remove_request(req)
+        
+        return completed
 
     # ================================================================================================
     # SERIAL COMMUNICATION
@@ -1314,13 +1379,16 @@ class RxModule:
     # ================================================================================================
 
     async def query_hw_version(self, timeout: float = 5.0) -> tuple[int, bytes]:
-        """Query hardware version."""
+        """Query hardware version.
+        
+        Args:
+            timeout: Query timeout in seconds. Use None for indefinite waiting.
+        """
         irp = IRP(function=FunctionCode.MA_QUERY_HW_VER, params=b"")
         req = self._create_request(irp, 1, 19, "MA_QUERY_HW_VER")
 
         self._place_request(req)
-        if not await req.wait(timeout):
-            await self.cancel_all_io_requests()
+        if not await self._wait_for_request(req, timeout):
             return ErrorCode.ERR_RF_TIMEOUT, bytes(16)
 
         if req.icp.result == ErrorCode.SUCCESS:
@@ -1330,13 +1398,16 @@ class RxModule:
         return req.icp.result, bytes(16)
 
     async def query_fw_version(self, timeout: float = 5.0) -> tuple[int, int, int, bool]:
-        """Query firmware version."""
+        """Query firmware version.
+        
+        Args:
+            timeout: Query timeout in seconds. Use None for indefinite waiting.
+        """
         irp = IRP(function=FunctionCode.MA_QUERY_FW_VER, params=b"")
         req = self._create_request(irp, 1, 6, "MA_QUERY_FW_VER")
 
         self._place_request(req)
-        if not await req.wait(timeout):
-            await self.cancel_all_io_requests()
+        if not await self._wait_for_request(req, timeout):
             return ErrorCode.ERR_RF_TIMEOUT, 0, 0, False
 
         if req.icp.result == ErrorCode.SUCCESS:
@@ -1363,13 +1434,17 @@ class RxModule:
     # ================================================================================================
 
     async def ew_get_fd_serial_request(self, index: int, timeout: float = 5.0) -> tuple[int, bytes]:
-        """Get EW serial number at index."""
+        """Get EW serial number at index.
+        
+        Args:
+            timeout: Request timeout in seconds. Use None for indefinite waiting.
+        """
         params = encode_uint16(index)
         irp = IRP(function=FunctionCode.EW_GET_FD_SERIAL, params=params)
         req = self._create_request(irp, 3, 19, "EW_GET_FD_SERIAL")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EW_GET_FD_SERIAL)
@@ -1377,8 +1452,15 @@ class RxModule:
             return req.icp.result, serial
         return req.icp.result, bytes(16)
 
-    async def ew_rcv_button_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
-        """Receive EW button press."""
+    async def ew_rcv_button_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
+        """Receive EW button press.
+        
+        Args:
+            timeout: Read timeout in seconds. Use None for indefinite waiting.
+        
+        Returns:
+            (result, info_type, transmitter, info_data)
+        """
         irp = IRP(function=FunctionCode.EW_RCV_BUTTON, params=b"")
         req = self._create_request(irp, 1, 21, "EW_RCV_BUTTON")
 
@@ -1394,13 +1476,17 @@ class RxModule:
         return req.icp.result, 0, bytes(16), bytes(8)
 
     async def ew_send_cmd_request(self, gateway: bytes, button: int, timeout: float = 5.0) -> int:
-        """Send EW command."""
+        """Send EW command.
+        
+        Args:
+            timeout: Command timeout in seconds. Use None for indefinite waiting.
+        """
         params = encode_serial_array(gateway) + bytes([button])
         irp = IRP(function=FunctionCode.EW_SEND_CMD, params=params)
         req = self._create_request(irp, 18, 3, "EW_SEND_CMD")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
@@ -1499,7 +1585,7 @@ class RxModule:
 
                 # Phase 2: Monitor pending requests for completion
                 with self._send_cmd_loop_lock:
-                    completed = []
+                    completed: list[Request] = []
                     for req in self._send_cmd_loop_pending:
                         if req.completed:
                             completed.append(req)
@@ -1563,8 +1649,15 @@ class RxModule:
                 self._send_cmd_loop_queue.clear()
                 self._send_cmd_loop_pending.clear()
 
-    async def ew_rcv_ex_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
-        """Receive EW extended telegram."""
+    async def ew_rcv_ex_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
+        """Receive EW extended telegram.
+        
+        Args:
+            timeout: Read timeout in seconds. Use None for indefinite waiting.
+        
+        Returns:
+            (result, info_type, receiver, info_data)
+        """
         irp = IRP(function=FunctionCode.EW_RCV_EX, params=b"")
         req = self._create_request(irp, 1, 28, "EW_RCV_EX")
 
@@ -1601,36 +1694,59 @@ class RxModule:
         return req.icp.result, bytes(16)
 
     async def ewb_add_nfilter_request(self, gateway: bytes, timeout: float = 5.0) -> int:
-        """Add EWB gateway to filter."""
+        """Add EWB gateway to filter.
+        
+        Args:
+            gateway: Gateway serial number (16 bytes)
+            timeout: Request timeout in seconds
+        
+        Returns:
+            Error code
+        """
         params = encode_serial_array(gateway)
         irp = IRP(function=FunctionCode.EWB_ADD_NFILTER, params=params)
         req = self._create_request(irp, 17, 3, "EWB_ADD_NFILTER")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
     async def ewb_clear_nfilter_request(self, timeout: float = 5.0) -> int:
-        """Clear EWB filter."""
+        """Clear EWB filter.
+        
+        Args:
+            timeout: Request timeout in seconds
+        
+        Returns:
+            Error code
+        """
         irp = IRP(function=FunctionCode.EWB_CLEAR_NFILTER, params=b"")
         req = self._create_request(irp, 1, 3, "EWB_CLEAR_NFILTER")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
     async def ewb_join_device_request(
         self, gateway: bytes, timeout: float = 30.0
     ) -> tuple[int, int, bytes]:
-        """Join EWB device."""
+        """Join EWB device.
+        
+        Args:
+            gateway: Gateway serial number (16 bytes)
+            timeout: Request timeout in seconds (default 30s for learning)
+        
+        Returns:
+            (result, device_type, receiver_serial)
+        """
         params = encode_serial_array(gateway)
         irp = IRP(function=FunctionCode.EWB_JOIN_DEVICE, params=params)
         req = self._create_request(irp, 17, 20, "EWB_JOIN_DEVICE")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_JOIN_DEVICE)
@@ -1642,18 +1758,34 @@ class RxModule:
     async def ewb_remove_device_request(
         self, gateway: bytes, receiver: bytes, timeout: float = 5.0
     ) -> int:
-        """Remove EWB device."""
+        """Remove EWB device.
+        
+        Args:
+            gateway: Gateway serial number (16 bytes)
+            receiver: Receiver serial number (16 bytes)
+            timeout: Request timeout in seconds
+        
+        Returns:
+            Error code
+        """
         params = encode_serial_array(gateway) + encode_serial_array(receiver)
         irp = IRP(function=FunctionCode.EWB_REMOVE_DEVICE, params=params)
         req = self._create_request(irp, 33, 3, "EWB_REMOVE_DEVICE")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
-    async def ewb_rcv_request(self, timeout: float = 30.0) -> tuple[int, int, bytes, bytes]:
-        """Receive EWB telegram."""
+    async def ewb_rcv_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
+        """Receive EWB telegram.
+        
+        Args:
+            timeout: Read timeout in seconds. Use None for indefinite waiting.
+        
+        Returns:
+            (result, info_type, receiver_transmitter, info_data)
+        """
         irp = IRP(function=FunctionCode.EWB_RCV, params=b"")
         req = self._create_request(irp, 1, 28, "EWB_RCV")
 
@@ -1676,7 +1808,18 @@ class RxModule:
         desired_state: bytes,
         timeout: float = 5.0,
     ) -> tuple[int, int, bytes]:
-        """Change EWB device state."""
+        """Change EWB device state.
+        
+        Args:
+            gateway: Gateway serial number (16 bytes)
+            receiver: Receiver serial number (16 bytes)
+            desired_mode: Desired mode value
+            desired_state: Desired state (4 bytes)
+            timeout: Request timeout in seconds
+        
+        Returns:
+            (result, recent_mode, recent_state)
+        """
         params = (
             encode_serial_array(gateway)
             + encode_serial_array(receiver)
@@ -1687,7 +1830,7 @@ class RxModule:
         req = self._create_request(irp, 38, 8, "EWB_CHANGE_STATE")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_CHANGE_STATE)
@@ -1703,7 +1846,17 @@ class RxModule:
         desired_mode: int,
         timeout: float = 5.0,
     ) -> tuple[int, int, bytes]:
-        """Query EWB device state."""
+        """Query EWB device state.
+        
+        Args:
+            gateway: Gateway serial number (16 bytes)
+            receiver: Receiver serial number (16 bytes)
+            desired_mode: Mode to query
+            timeout: Request timeout in seconds
+        
+        Returns:
+            (result, recent_mode, state)
+        """
         params = (
             encode_serial_array(gateway) + encode_serial_array(receiver) + bytes([desired_mode])
         )
@@ -1711,7 +1864,7 @@ class RxModule:
         req = self._create_request(irp, 34, 8, "EWB_QUERY_STATE")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_QUERY_STATE)
@@ -1729,7 +1882,19 @@ class RxModule:
         desired_state: bytes,
         timeout: float = 30.0,
     ) -> tuple[int, int, bytes]:
-        """Control EWB transmitter learning."""
+        """Control EWB transmitter learning.
+        
+        Args:
+            gateway: Gateway serial number (16 bytes)
+            receiver: Receiver serial number (16 bytes)
+            ctrl: Control code
+            desired_mode: Desired mode
+            desired_state: Desired state (4 bytes)
+            timeout: Request timeout in seconds (default 30s for learning)
+        
+        Returns:
+            (result, recent_mode, recent_state)
+        """
         params = (
             encode_serial_array(gateway)
             + encode_serial_array(receiver)
@@ -1740,7 +1905,7 @@ class RxModule:
         req = self._create_request(irp, 39, 8, "EWB_TRLRN_CONTROL")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_TRLRN_CONTROL)
@@ -1754,9 +1919,12 @@ class RxModule:
     # ================================================================================================
 
     async def sec_rcv_request(
-        self, timeout: float = 30.0
+        self, timeout: float | None = 30.0
     ) -> tuple[int, int, int, int, int, int, int]:
         """Receive Secwave security telegram.
+
+        Args:
+            timeout: Read timeout in seconds. Use None for indefinite waiting.
 
         Returns:
             (result, stor_index, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
@@ -1785,7 +1953,7 @@ class RxModule:
 
         Args:
             stor_index: Storage index for the security entry (0-65535)
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default 30s for learning)
 
         Returns:
             (result, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
@@ -1795,7 +1963,7 @@ class RxModule:
         req = self._create_request(irp, 3, 16, "SEC_LEARN")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_LEARN)
@@ -1814,7 +1982,7 @@ class RxModule:
 
         Args:
             stor_index: Storage index (0-65535)
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds. Use None for indefinite waiting.
 
         Returns:
             (result, is_used, user_data)
@@ -1824,7 +1992,7 @@ class RxModule:
         req = self._create_request(irp, 3, 8, "SEC_STAT")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_STAT)
@@ -1838,7 +2006,7 @@ class RxModule:
 
         Args:
             stor_index: Storage index to delete (0-65535)
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds. Use None for indefinite waiting.
 
         Returns:
             Error code
@@ -1848,7 +2016,7 @@ class RxModule:
         req = self._create_request(irp, 3, 8, "SEC_DELETE")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
@@ -1856,7 +2024,7 @@ class RxModule:
         """Delete all Secwave security storage entries (factory reset).
 
         Args:
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds. Use None for indefinite waiting.
 
         Returns:
             Error code
@@ -1865,7 +2033,7 @@ class RxModule:
         req = self._create_request(irp, 1, 3, "SEC_DELETE_ALL")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
@@ -1886,7 +2054,7 @@ class RxModule:
         req = self._create_request(irp, 3, 8, "SEC_REPLY_QUERY")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_REPLY_QUERY)

@@ -10,6 +10,19 @@ All examples use the **Async API** which is recommended for:
 - Better error handling with timeouts
 - Non-blocking device operations
 
+## Choosing the Right Example
+
+| Use Case | Example | Key Features |
+|----------|---------|--------------|
+| **Just getting started** | `basic_example.py` | Device info, query versions, connectivity test |
+| **Clean Home Assistant pattern** | `async_example.py` | Minimal, HA-friendly structure |
+| **EW Send & Receive** | `ew_send_receive_example.py` | RX11/RX09: EW_SEND_CMD, EW_RCV_BUTTON (RX11 & RX09) |
+| **EWB Button Receive** | `rcv_callback_example.py` | Listen for EW button telegrams (30s timeout) |
+| **EWB Receive - NO timeout** | `ewb_rcv_example.py` | Unlimited wait, continuous loop, ideal for HA |
+| **EWB Device Pairing** | `ewb_pairing_example.py` | Learn new Bidi devices (RX11 only) |
+| **HA Integration Pattern** | `ha_integration_full_example.py` | Complete HA service integration (RX11 & RX09) |
+| **Test all devices** | `test_all_devices.py` | Comprehensive test suite for all 5 devices |
+
 ## Async API Examples (Recommended)
 
 ### basic_example.py
@@ -46,17 +59,130 @@ python async_example.py
 
 ### rcv_callback_example.py
 
-RX09-specific example showing how to receive button presses asynchronously.
+RxModule example showing how to receive button presses asynchronously.
 
 ```bash
 python rcv_callback_example.py
 ```
 
 **Shows:**
-- RX09 device setup
-- Waiting for button telegram
-- Timeout handling
+- RxModule/RX22 device setup
+- Waiting for EW (Easywave) button telegrams
+- Timeout handling (30 seconds)
 - Multiple press reception loop
+- Type-safe device methods
+
+### ewb_rcv_example.py
+
+**NEW:** RX11 example with NO timeout for EWB (Easywave Bidi) telegrams.
+
+```bash
+python ewb_rcv_example.py
+```
+
+**Shows:**
+- RX11 USB transceiver setup
+- Receiving EWB telegrams with **NO timeout** (waits indefinitely)
+- Continuous listening loop for multiple telegrams
+- Perfect for long-running integrations that need occasional updates
+- Keyboard interrupt handling
+- Error code interpretation
+
+**Key Features:**
+- Single receive with unlimited wait
+- Continuous loop mode for multiple receives
+- No timeout - waits as long as needed for telegrams
+- Perfect for Home Assistant integrations that need to respond to occasional actions
+- Demonstrates clean async waiting without polling
+
+This example is ideal for Home Assistant integrations that need to listen for
+occasional Easywave Bidi state changes without blocking other operations.
+Device waits cleanly, responds immediately when a telegram arrives.
+
+### ew_send_receive_example.py
+
+**NEW:** RX11 & RX09 example showing Easywave send and receive workflow.
+
+```bash
+python ew_send_receive_example.py
+```
+
+**Shows:**
+- RX11 (primary) and RX09 (secondary) implementation
+- Complete workflow: Get gateways → Send command → Receive response
+- EW_GET_FD_SERIAL - Discover Easywave gateways
+- EW_SEND_CMD - Send command to a gateway
+- EW_RCV_BUTTON - Wait for button response
+
+**Key Features:**
+- Device-specific implementations (RX11 has send, RX09 is receive-only)
+- Gateway discovery and selection
+- Timeout handling for responses
+- Error code interpretation
+
+**RX11 Capabilities:** Send commands, full bidirectional communication
+**RX09 Capabilities:** Receive buttons, basic devices
+
+### ewb_pairing_example.py
+
+**NEW:** RX11 example for learning new Easywave Bidi devices.
+
+```bash
+python ewb_pairing_example.py
+```
+
+**Shows:**
+- RX11 Bidi-capable gateway support
+- Complete device learning workflow:
+  1. Discover Bidi gateways (EWB_GET_FD_SERIAL)
+  2. Add learning filter (EWB_ADD_NFILTER)
+  3. Learn new device (EWB_JOIN_DEVICE)
+  4. Control device state (EWB_CHANGE_STATE)
+  5. Listen for state changes (EWB_RCV)
+- Background listening for state changes
+- Timeout-based and no-timeout modes
+
+**Key Features:**
+- Device pairing workflow
+- Learning mode activation
+- State change monitoring
+- RX11 specific (requires Bidi-capable gateway)
+
+**Note:** Only RX11 supports Easywave Bidi protocol. RX09, RX21, RX22, RX25 
+do not support EWB methods.
+
+### ha_integration_full_example.py
+
+**NEW:** Complete Home Assistant integration pattern for RX11 and RX09.
+
+```bash
+python ha_integration_full_example.py
+```
+
+**Shows:**
+- `RxModuleHA` class for HA service integration
+- Separate setup for RX11 and RX09
+- Background listening task management
+- Event callbacks for button presses
+- Connection lifecycle management
+- Graceful shutdown handling
+
+**Key Features:**
+- Single device or multiple device setups
+- Background listening (no blocking)
+- Event callbacks with timestamps
+- Automatic device initialization
+- Error recovery and reconnection patterns
+- Home Assistant event bus integration pattern
+
+**Use Cases:**
+- Long-running HA services (days/weeks of listening)
+- Multiple receiver types in same setup
+- Clean integration with HA's async event loop
+- No polling, minimal resource usage
+
+This is the recommended pattern for creating a full Home Assistant
+custom component integrating Easywave receivers.
 
 ### ha_integration_example.py
 
@@ -74,6 +200,29 @@ python ha_integration_example.py
 - Proper error handling with timeouts
 
 This is the recommended pattern for Home Assistant custom components.
+
+---
+
+## Comprehensive Examples by Use Case
+
+### Easywave Standard (EW) Protocol
+
+For standard Easywave devices (gateways, switches):
+- `ew_send_receive_example.py` - Send commands and receive button responses
+  - RX11: Full bidirectional (send + receive)
+  - RX09: Receive only
+
+### Easywave Bidi (EWB) Protocol
+
+For Easywave Bidi-capable devices:
+- `ewb_rcv_example.py` - Receive Bidi telegrams with no timeout
+- `ewb_pairing_example.py` - Learn and manage Bidi devices (RX11 only)
+
+### Home Assistant Integration
+
+Ready-to-use HA integration patterns:
+- `ha_integration_full_example.py` - Complete service integration (RX11 + RX09)
+- `ha_integration_example.py` - Entity-based integration
 
 ---
 
@@ -200,6 +349,53 @@ sudo usermod -a -G dialout $USER
 # Or run with sudo
 sudo python3 basic_example.py
 ```
+
+---
+
+## Timeout Strategies for Integration Services
+
+The `ewb_rcv_example.py` demonstrates techniques for services that need to listen
+for occasional telegrams without blocking. This is typical in Home Assistant where
+you want to respond to user actions that might take minutes, hours, or days.
+
+### Timeout Strategies
+
+**Short Timeout (quick response, polling):**
+```python
+result, ... = await device.ew_rcv_button_request(timeout=10.0)  # 10 seconds
+# Then loop and call again
+```
+Use for: Interactive applications, checking for frequent updates
+
+**Long Timeout (no polling, single long wait):**
+```python
+result, ... = await device.ew_rcv_button_request(timeout=600.0)  # 10 minutes
+```
+Use for: Occasional checks, less frequent updates
+
+**NO Timeout (unlimited, waits forever):**
+```python
+result, ... = await device.ewb_rcv_request(timeout=None)  # Wait indefinitely!
+```
+Use for: Home Assistant integrations, long-running services
+
+**Continuous Loop (multiple events):**
+```python
+while True:
+    result, ... = await device.ewb_rcv_request(timeout=None)
+    if result == ErrorCode.SUCCESS:
+        # Process telegram
+        pass
+```
+Use for: Listening for multiple telegrams in sequence
+
+### Advantages of NO_TIMEOUT (timeout=None)
+
+- **No CPU overhead** - Device waits cleanly, no polling loop
+- **Responsive** - Telegram is processed as soon as it arrives
+- **Clean shutdown** - Can interrupt with Ctrl+C or task cancellation
+- **Scalable** - Can run many devices concurrently without blocking event loop
+- **Perfect for HA** - Integrate naturally with Home Assistant's async design
 
 ---
 

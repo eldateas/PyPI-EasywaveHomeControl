@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from ...protocols.base import BaseProtocol
-from .protocol import RxModule
+from .protocol import RxModule, ErrorCode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class RxModuleDevice(RxModule, BaseProtocol):
     DEVICE_TYPE: str = "RX_BASE"
     DEFAULT_BAUDRATE: int = 115200
     DEFAULT_VARIANT: str = "ew"
+    ErrorCode = ErrorCode  # Expose ErrorCode as class attribute
 
     def __init__(
         self,
