@@ -1,103 +1,320 @@
-# Examples and Test Devices
+# Examples
 
-This directory contains example scripts and test devices demonstrating how to use the easywave-rx-module library.
+This directory contains example scripts demonstrating how to use the easywave-rx-module library.
 
-## Quick Start
+All examples use the **Async API** with the new unified `.create()` factory method.
 
-All examples use the **Async API** which is recommended for:
-- Home Assistant integration (no blocking calls on event loop)
-- Modern Python development (asyncio/await)
-- Better error handling with timeouts
-- Non-blocking device operations
+## Overview
 
-## Choosing the Right Example
+| Example | Devices | Use Case | Key Features |
+|---------|---------|----------|--------------|
+| **ew_send_receive_example.py** | RX11, RX09 | Send commands to gateways, receive button presses | Gateway discovery, EW_SEND_CMD, EW_RCV, error handling |
+| **ewb_pairing_example.py** | RX11 | Learn new Easywave Bidi devices | Join device, device state query, paired device management |
+| **ha_integration_full_example.py** | RX11, RX09 | Home Assistant integration pattern | Background listening, event callbacks, connection management |
 
-| Use Case | Example | Key Features |
-|----------|---------|--------------|
-| **Just getting started** | `basic_example.py` | Device info, query versions, connectivity test |
-| **Clean Home Assistant pattern** | `async_example.py` | Minimal, HA-friendly structure |
-| **EW Send & Receive** | `ew_send_receive_example.py` | RX11/RX09: EW_SEND_CMD, EW_RCV_BUTTON (RX11 & RX09) |
-| **EWB Button Receive** | `rcv_callback_example.py` | Listen for EW button telegrams (30s timeout) |
-| **EWB Receive - NO timeout** | `ewb_rcv_example.py` | Unlimited wait, continuous loop, ideal for HA |
-| **EWB Device Pairing** | `ewb_pairing_example.py` | Learn new Bidi devices (RX11 only) |
-| **HA Integration Pattern** | `ha_integration_full_example.py` | Complete HA service integration (RX11 & RX09) |
-| **Test all devices** | `test_all_devices.py` | Comprehensive test suite for all 5 devices |
+## Running the Examples
 
-## Async API Examples (Recommended)
-
-### basic_example.py
-
-Simple, clean example of the async API - a great starting point!
+### Prerequisites
 
 ```bash
-python basic_example.py
+# Install the library (if not already installed)
+pip install easywave-rx-module
+
+# Or from source:
+cd ..
+pip install -e .
+```
+
+### ew_send_receive_example.py
+
+Demonstrates Easywave Basic (EW) send and receive for both RX11 and RX09 devices.
+
+```bash
+python ew_send_receive_example.py
+```
+
+**For RX11:**
+```python
+async def ew_send_receive_rx11() -> None:
+    device = await RX11Device.create(port="/dev/ttyUSB0")
+    
+    # Step 1: Discover gateways
+    for i in range(10):
+        result, gateway = await device.ew_get_fd_serial_request(index=i)
+        if result == RX11Device.ErrorCode.SUCCESS:
+            print(f"Gateway: {gateway.hex()}")
+    
+    # Step 2: Send command to gateway
+    result = await device.ew_send_cmd_request(gateway=gateway, button=0)
+    
+    # Step 3: Receive button response
+    result, info_type, transmitter, info_data = await device.ew_rcv_button_request(timeout=30.0)
+```
+
+**For RX09:**
+```python
+async def ew_send_receive_rx09() -> None:
+    device = await RX09Device.create(port="/dev/ttyUSB1")
+    
+    # RX09 only supports receive (no send on ASCII protocol)
+    # But you can listen for spontaneous button presses
+    result, serial_number, button_code = await device.receive_telegramm(timeout=30.0)
 ```
 
 **Shows:**
-- `AsyncDeviceFactory.create()` - Creates and connects device automatically
-- Getting device status
-- Querying hardware/firmware versions
-- Device connectivity check
+- Unified `.create()` factory method
+- Device-specific ErrorCode enums
+- Gateway discovery (RX11)
+- Send and receive workflows
+- Error handling with specific error codes
 - Proper `await device.disconnect()` cleanup
 
-**Key Point:** `create()` automatically calls `connect()` internally, so you only need to call `disconnect()` when done.
+### ewb_pairing_example.py
 
-### async_example.py
-
-Comprehensive async demonstration with device information and function listing.
+Demonstrates Easywave Bidi (EWB) device pairing workflow for RX11.
 
 ```bash
-python async_example.py
+python ewb_pairing_example.py
 ```
-
-**Shows:**
-- Complete async device creation and connection
-- Device info retrieval
-- Function discovery
-- Ping/connectivity testing
-- Available async methods documentation
-
-### rcv_callback_example.py
-
-RxModule example showing how to receive button presses asynchronously.
-
-```bash
-python rcv_callback_example.py
-```
-
-**Shows:**
-- RxModule/RX22 device setup
-- Waiting for EW (Easywave) button telegrams
-- Timeout handling (30 seconds)
-- Multiple press reception loop
-- Type-safe device methods
-
-### ewb_rcv_example.py
-
-**NEW:** RX11 example with NO timeout for EWB (Easywave Bidi) telegrams.
-
-```bash
-python ewb_rcv_example.py
-```
-
-**Shows:**
-- RX11 USB transceiver setup
-- Receiving EWB telegrams with **NO timeout** (waits indefinitely)
-- Continuous listening loop for multiple telegrams
-- Perfect for long-running integrations that need occasional updates
-- Keyboard interrupt handling
-- Error code interpretation
 
 **Key Features:**
-- Single receive with unlimited wait
-- Continuous loop mode for multiple receives
-- No timeout - waits as long as needed for telegrams
-- Perfect for Home Assistant integrations that need to respond to occasional actions
-- Demonstrates clean async waiting without polling
+```python
+device = await RX11Device.create(port="/dev/ttyUSB0")
 
-This example is ideal for Home Assistant integrations that need to listen for
-occasional Easywave Bidi state changes without blocking other operations.
-Device waits cleanly, responds immediately when a telegram arrives.
+# Step 1: Learn new device (enter pairing mode)
+result, receiver = await device.ewb_join_device_request(
+    transmitter_serial=transmitter_bytes
+)
+
+# Step 2: Query learned device state
+result, mode, state = await device.ewb_query_state_request(device_id=receiver)
+
+# Step 3: Change device state
+result = await device.ewb_change_state_request(
+    device_id=receiver,
+    mode=state_mode,
+    state=new_state
+)
+```
+
+**Shows:**
+- Device pairing workflow
+- State queries and changes
+- Device management
+- Error handling
+
+### ha_integration_full_example.py
+
+Real-world Home Assistant integration pattern with background listening.
+
+```bash
+python ha_integration_full_example.py
+```
+
+**Architecture:**
+```python
+class RxModuleHA:
+    """Home Assistant integration wrapper."""
+    
+    def __init__(self, device_class, port, event_callback):
+        self.device = await device_class.create(port=port)
+    
+    async def start_listening(self):
+        """Start background listening for button presses."""
+        # Runs listener task in background
+        self._listen_task = asyncio.create_task(self._listen_loop())
+    
+    def register_callback(self, callback):
+        """Register event callback for button presses."""
+        # Callbacks fired when telegrams received
+```
+
+**Shows:**
+- Device lifecycle management (create, connect, disconnect)
+- Background listener task
+- Event callbacks for button presses
+- Connection state tracking
+- Error recovery
+- HA-friendly architecture
+
+**Usage:**
+```python
+# Setup RX11 integration
+rx11 = await setup_rx11_integration(config={"port": "/dev/ttyUSB0"})
+await rx11.start_listening()
+
+# When device disconnects or error occurs:
+rx11.set_disconnect_callback(on_disconnect)
+
+# Register for button events
+def on_button_event(data):
+    print(f"Button {data['button']} from {data['transmitter'].hex()}")
+
+# For RX09, register spontaneous RCV callbacks:
+rx11.device.register_rcv_callback(on_button_event)
+```
+
+## API Reference Quick Guide
+
+### Creating Devices
+
+```python
+from easywave_rx_module import RX11Device, RX21Device, RX22Device, RX25Device, RX09Device
+
+# RxModule devices (binary protocol, 115200 baud)
+device = await RX11Device.create(port="/dev/ttyUSB0", timeout=5.0)
+device = await RX21Device.create(port="/dev/ttyUSB0")
+device = await RX22Device.create(port="/dev/ttyUSB0")  # Raspberry Pi UART often uses RX22
+device = await RX25Device.create(port="/dev/ttyUSB0")
+
+# RX09 device (ASCII protocol, 57600 baud)
+device = await RX09Device.create(port="/dev/ttyUSB1")
+```
+
+### Common Methods
+
+```python
+# Connection
+await device.connect() -> bool
+await device.disconnect() -> None
+
+# Info
+await device.ping_request(timeout=5.0) -> bool
+await device.get_device_info() -> dict[str, Any]
+
+# RxModule-specific
+result, hw_version = await device.query_hw_version()
+result, fw_version = await device.query_fw_version()
+
+# RX09-specific
+result, count = await device.query_positions()
+```
+
+### Error Handling
+
+```python
+# Check results with device-specific ErrorCode enums
+if result == RX11Device.ErrorCode.SUCCESS:
+    print("Success!")
+elif result == RX11Device.ErrorCode.ERR_RF_TIMEOUT:
+    print("RF timeout")
+else:
+    print(f"Error: 0x{result:02x}")
+
+# Common error codes
+# SUCCESS (0x00) - Operation completed
+# ERR_RF_TIMEOUT (0x07) - No response from device
+# ERR_FAILSTATE (0xFF) - Module in failure state
+```
+
+### Callbacks
+
+```python
+# Disconnect callback
+device.set_disconnect_callback(on_disconnect_func)
+
+# RCV message callbacks (RX09 only)
+device.register_rcv_callback(on_message_func)
+device.unregister_rcv_callback(on_message_func)
+device.clear_rcv_callbacks()
+```
+
+## Common Patterns
+
+### Timeout Handling
+
+```python
+try:
+    # ew_rcv_button_request with timeout
+    result, info_type, transmitter, info_data = await device.ew_rcv_button_request(
+        timeout=30.0  # 30 seconds
+    )
+except asyncio.TimeoutError:
+    print("No button press received within 30 seconds")
+```
+
+### Indefinite Waiting (RCV functions only)
+
+```python
+# RCV functions support indefinite waiting
+result, info_type, transmitter, info_data = await device.ew_rcv_button_request(
+    timeout=None  # Wait indefinitely
+)
+```
+
+### Background Listening
+
+```python
+# Start listening in background
+listen_task = asyncio.create_task(listen_loop())
+
+async def listen_loop():
+    while True:
+        try:
+            result, info_type, transmitter, info_data = await device.ew_rcv_button_request(
+                timeout=None  # Indefinite wait in background
+            )
+            if result == RX11Device.ErrorCode.SUCCESS:
+                print(f"Button pressed on {transmitter.hex()}")
+        except asyncio.CancelledError:
+            break
+
+# Later, cancel the task
+listen_task.cancel()
+```
+
+## Type Safety
+
+All examples pass Pylance strict-mode validation:
+
+```bash
+pylance --mode=strict examples/*.py
+```
+
+This ensures:
+- All generic types are properly specified
+- No "Unknown" types in IDE
+- Type checking catches errors early
+
+## Troubleshooting
+
+### Port not found
+
+```bash
+# List available serial ports
+python -c "import serial.tools.list_ports; print([p.device for p in serial.tools.list_ports.comports()])"
+
+# Linux
+ls -la /dev/ttyUSB* /dev/ttyAMA*
+
+# macOS
+ls -la /dev/tty.* /dev/cu.*
+```
+
+### Permission denied
+
+```bash
+# Linux: add user to dialout group
+sudo usermod -a -G dialout $USER
+# Log out and log back in for changes to take effect
+```
+
+### Device not responding
+
+```python
+# Check if device is present
+connected = await device.ping_request(timeout=3.0)
+if not connected:
+    print(f"Device not responding. Last error: {device.last_error}")
+```
+
+## Further Reading
+
+See [README.md](../README.md) for:
+- API documentation
+- Protocol details
+- Error codes reference
+- Installation instructions
 
 ### ew_send_receive_example.py
 

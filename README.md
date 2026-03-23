@@ -10,8 +10,9 @@ Optimized for **Home Assistant integration** with 100% non-blocking async API.
 - **Multi-Family Support** - Binary protocol (RX11/21/22/25) + ASCII protocol (RX09)
 - **High Performance** - 115200 baud communication, request pipelining
 - **Robust** - Comprehensive error handling, health checks, timeout management
-- **Clean API** - Simple async factory pattern for device creation
-- **Type Hints** - Full TypeScript-style type annotations
+- **Clean API** - Unified `.create()` factory method for all devices
+- **Type Hints** - Full Pylance strict-mode compliant type annotations
+- **Well-Tested** - Comprehensive examples and integration patterns
 
 ## Installation
 
@@ -19,42 +20,39 @@ Optimized for **Home Assistant integration** with 100% non-blocking async API.
 pip install easywave-rx-module
 ```
 
-## Important: Always Call disconnect()
+## Quick Start
 
-The `AsyncDeviceFactory.create()` method automatically calls `connect()` internally, but **you must always call `await device.disconnect()`** when done:
+### Creating Devices
 
-```python
-try:
-    device = await AsyncDeviceFactory.create("RX22", port="/dev/ttyAMA0")
-    # ... use device ...
-finally:
-    await device.disconnect()  # Always cleanup!
-```
-
-## Quick Start (Async API)
+All devices use the unified `.create()` factory method:
 
 ```python
 import asyncio
-from easywave_rx_module import AsyncDeviceFactory
+from easywave_rx_module import RX11Device, RX09Device
 
 async def main():
-    # Create and connect to device (both in one call)
-    device = await AsyncDeviceFactory.create(
-        "RX22",
-        port="/dev/ttyAMA0",  # Raspberry Pi UART
+    # Create and automatically connect to device
+    device = await RX11Device.create(
+        port="/dev/ttyUSB0",
         timeout=5.0
     )
     
-    # Get device info
-    info = await device.get_device_info()
-    print(f"Device: {info}")
-    
-    # Check connectivity
-    connected = await device.ping_request(timeout=3.0)
-    print(f"Connected: {connected}")
-    
-    # Always disconnect when done!
-    await device.disconnect()
+    try:
+        # Device is now connected and ready to use
+        info = await device.get_device_info()
+        print(f"Device: {info}")
+        
+        # Check connectivity
+        connected = await device.ping_request(timeout=3.0)
+        print(f"Connected: {connected}")
+        
+        # Use device-specific methods
+        result, hw_version = await device.query_hw_version()
+        if result == RX11Device.ErrorCode.SUCCESS:
+            print(f"Hardware Version: {hw_version}")
+    finally:
+        # Always disconnect when done
+        await device.disconnect()
 
 asyncio.run(main())
 ```
@@ -78,173 +76,147 @@ asyncio.run(main())
 
 ## Async API Documentation
 
-### AsyncDeviceFactory
+### Device Classes
 
-Factory for creating async device instances.
-
-#### Creating Devices
+#### RxModule Devices (Binary Protocol, 115200 baud)
 
 ```python
-device = await AsyncDeviceFactory.create(
-    device_id="RX22",        # Device type
-    port="/dev/ttyAMA0",      # Serial port
-    timeout=5.0,              # Default timeout
-    variant="EW"              # Optional variant
-)
-```
+from easywave_rx_module import RX11Device, RX21Device, RX22Device, RX25Device
 
-**Supported Device IDs:**
-- RxModule: `RX11`, `RX21`, `RX22`, `RX25`
-- RX09: `RX09`, `RX09-BASIC`
+# All RxModule devices use the same interface
+device = await RX11Device.create(port="/dev/ttyUSB0")
 
-#### Device Methods
+# RxModule-specific methods
+result, hw_version = await device.query_hw_version()
+result, fw_version = await device.query_fw_version()
 
-All devices inherit from `AsyncBaseProtocol` with these methods:
+# Easywave Basic (EW) functions
+result, info_type, transmitter, info_data = await device.ew_rcv_button_request(timeout=30.0)
+await device.ew_send_cmd_request(gateway=gateway_serial, button=0)
 
-```python
-# Connection
-await device.connect() -> bool        # Usually called automatically
-await device.disconnect()              # Required: cleanup on shutdown
+# Easywave Bidi (EWB) functions
+result, receiver = await device.ewb_join_device_request(transmitter_serial)
 
-# Info
-await device.ping_request(timeout=5.0) -> bool
-await device.get_device_info()         # Returns dict with type, port, baudrate
-await device.get_available_functions() # Returns dict of available functions
-```
-
-**RxModule-specific (RX11/21/22/25):**
-
-```python
-await device.query_hw_version() -> tuple[int, str]
-await device.query_fw_version() -> tuple[int, str]
-await device.ew_send_cmd_request(gateway_id, button) -> tuple[int, bytes]
-await device.ew_rcv_button_request() -> tuple[int, bytes]
-```
-
-**RX09-specific:**
-
-```python
-await device.get_device_id()          # Device identification
-await device.query_positions()        # Number of positions
-await device.send_telegramm(pos, button)  # Send telegram
-await device.query_led() -> bool      # LED status
-await device.set_led(enabled)         # Control LED
-```
-
-```python
-has_hardware_error: bool
-```
-Check if a hardware error occurred (e.g., USB disconnected).
-
-```python
-last_error: str | None
-```
-Get the last error message.
-
-#### Callbacks
-
-```python
-set_disconnect_callback(callback: Callable[[], None] | None) -> None
-```
-Register a callback to be called when the device disconnects or a hardware error occurs.
-
-### Constants
-
-#### Error Codes
-
-```python
-from easywave_rx_module import ErrorCode
-
-ErrorCode.SUCCESS           # 0x00
-ErrorCode.ERR_RF_TIMEOUT    # 0x07 - Command timeout
-ErrorCode.ERR_FAILSTATE     # 0xFF - Module in failure state
-# ... and more
-```
-
-#### Function Codes
-
-```python
-from easywave_rx_module import FunctionCode
-
-FunctionCode.MA_QUERY_HW_VER  # Hardware version query
-FunctionCode.MA_QUERY_FW_VER  # Firmware version query
-FunctionCode.PING_RCV         # Ping
-# ... and more
-```
-
-## Protocol Details
-
-### RxModule Protocol
-
-The RxModule protocol is a serial-based request/response protocol used by EASYWAVE RX11 devices.
-
-#### Packet Structure
-
-```
-[SOP] [Function | Params] [EOP]
-
-SOP = 0x81 (Start of Packet)
-EOP = 0x82 (End of Packet)
-```
-
-#### Byte Stuffing
-
-Bytes in the range 0x80-0x82 are escaped with a prefix byte:
-- Byte to stuff: `byte`
-- Escaped: `0x80 (byte - 0x80)`
-
-### Data Structures
-
-#### IRP (I/O Request Packet)
-
-Represents a command to be sent to the device.
-
-#### ICP (I/O Completion Packet)
-
-Represents a response received from the device.
-
-#### Request
-
-Internal structure tracking a pending request with its handle and result.
-
-## Examples
-
-### Monitoring Connection State
-
-```python
-from easywave_rx_module import RxModule
-
-def on_disconnect():
-    print("Device disconnected!")
-
-rx = RxModule(port="/dev/ttyACM0")
-rx.set_disconnect_callback(on_disconnect)
-
-if rx.connect():
-    print(f"Connected: {rx.is_connected}")
-    print(f"Status: {rx.connection_status}")
-```
-
-### Error Handling
-
-```python
-from easywave_rx_module import RxModule, ErrorCode
-
-rx = RxModule(port="/dev/ttyACM0")
-
-if not rx.connect():
-    print(f"Connection failed: {rx.last_error}")
-    exit(1)
-
-result, hw_ver = rx.query_hw_version()
-
-if result == ErrorCode.SUCCESS:
-    print(f"Success: {hw_ver}")
-elif result == ErrorCode.ERR_RF_TIMEOUT:
-    print("Request timed out")
+# Check error codes
+if result == RX11Device.ErrorCode.SUCCESS:
+    print(f"Success: {info_type}")
 else:
     print(f"Error: {result}")
 ```
+
+#### RX09 Device (ASCII Protocol, 57600 baud)
+
+```python
+from easywave_rx_module import RX09Device
+
+device = await RX09Device.create(port="/dev/ttyUSB0")
+
+# RX09-specific methods
+result, serial_number, button_code = await device.receive_telegramm(timeout=30.0)
+result, position_count = await device.query_positions()
+result = await device.send_telegramm(position=0, button_code="A")
+
+# Check error codes
+if result == RX09Device.ErrorCode.SUCCESS:
+    print("Success")
+```
+
+#### Common Methods (All Devices)
+
+```python
+# Connection management
+await device.connect() -> bool
+await device.disconnect() -> None
+
+# Device info
+await device.get_device_info() -> dict[str, Any]
+await device.ping_request(timeout=5.0) -> bool
+
+# Properties
+device.is_connected -> bool
+device.connection_status -> str  # "connected", "reconnecting", "error"
+device.last_error -> str | None
+device.has_hardware_error -> bool
+```
+
+### Error Codes
+
+Each device family has device-specific error code enums:
+
+```python
+# RxModule devices (RX11, RX21, RX22, RX25)
+from easywave_rx_module import RX11Device
+
+if result == RX11Device.ErrorCode.SUCCESS:
+    print("Command successful")
+elif result == RX11Device.ErrorCode.ERR_RF_TIMEOUT:
+    print("RF communication timeout")
+elif result == RX11Device.ErrorCode.ERR_FAILSTATE:
+    print("Device in failure state")
+
+# RX09 device
+from easywave_rx_module import RX09Device
+
+if result == RX09Device.ErrorCode.SUCCESS:
+    print("Command successful")
+```
+
+### Callbacks
+
+Register callbacks to respond to device events:
+
+```python
+def on_disconnect():
+    print("Device disconnected or hardware error occurred")
+
+device.set_disconnect_callback(on_disconnect)
+
+# Register callback for spontaneous RCV messages (RX09 only)
+def on_button_pressed(data: dict[str, Any]):
+    serial = data["serial_number"]
+    button = data["button_code"]
+    print(f"Button {button} pressed on {serial:06X}")
+
+device.register_rcv_callback(on_button_pressed)
+```
+
+## Examples
+
+See the [examples/](examples/) directory for complete working examples:
+
+- **[ew_send_receive_example.py](examples/ew_send_receive_example.py)** - Discover gateways, send commands, receive button presses (RX11 & RX09)
+- **[ewb_pairing_example.py](examples/ewb_pairing_example.py)** - Easywave Bidi device pairing workflow
+- **[ha_integration_full_example.py](examples/ha_integration_full_example.py)** - Home Assistant integration pattern with background listening
+
+## Protocol Details
+
+### RxModule Protocol (RX11/21/22/25)
+
+Binary request/response protocol at 115200 baud with:
+- Packet structure: `[SOP(0x81)] [Function+Params] [EOP(0x82)]`
+- Byte stuffing for bytes in range 0x80-0x82
+- Request/response IRP/ICP pairs with handles
+- Timeout support (default 5.0s, RCV functions support indefinite waiting)
+
+### RX09 Protocol (RX09)
+
+ASCII text-based protocol at 57600 baud with:
+- Comma-separated commands (e.g., `CMD,PARAM1,PARAM2`)
+- CR (0x0D) line terminator
+- Simple request/response matching
+- Limited function set (Easywave Basic only)
+
+## Type Hints & Validation
+
+The library is fully typed and passes Pylance strict-mode validation:
+```bash
+pylance --mode=strict
+```
+
+All generic types are explicitly specified (no `Unknown` types):
+- `dict[str, Any]` instead of `dict`
+- `list[bytes]` instead of `list`
+- `asyncio.Task[None]` instead of `asyncio.Task`
 
 ## Requirements
 
