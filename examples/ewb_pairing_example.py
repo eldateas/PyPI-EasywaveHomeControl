@@ -28,11 +28,11 @@ _LOGGER = logging.getLogger(__name__)
 
 async def ewb_pair_and_learn_device() -> None:
     """Learn new Easywave Bidi device with gateway serial number.
-    
+
     Prerequisites:
     - RX11 connected and working
     - Device to be learned must be in learning mode
-    
+
     Workflow:
     1. Load gateway serial number from RX11
     2. Add filter with gateway serial number
@@ -47,9 +47,7 @@ async def ewb_pair_and_learn_device() -> None:
     try:
         # Create RX11 device
         print("📱 Creating RX11 USB Transceiver...")
-        device = await RX11Device.create(
-            port="/dev/ttyUSB0", timeout=5.0
-        )
+        device = await RX11Device.create(port="/dev/ttyUSB0", timeout=5.0)
         print("✓ Device created and connected\n")
 
         # Step 1: Get gateway serial number
@@ -105,7 +103,7 @@ async def ewb_pair_and_learn_device() -> None:
 
 async def ewb_listen_state_changes() -> None:
     """Simple listener for EWB state changes.
-    
+
     Use this to continuously monitor state changes from already-learned devices.
     """
     print("\n" + "=" * 80)
@@ -115,9 +113,7 @@ async def ewb_listen_state_changes() -> None:
     device: Optional[RX11Device] = None
     try:
         print("📱 Creating RX11 USB Transceiver...")
-        device = await RX11Device.create(
-            port="/dev/ttyUSB0", timeout=5.0
-        )
+        device = await RX11Device.create(port="/dev/ttyUSB0", timeout=5.0)
         print("✓ Device created and connected\n")
 
         print("📡 Listening for EWB state changes (No timeout)...")

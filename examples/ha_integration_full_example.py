@@ -38,7 +38,7 @@ class ButtonEvent:
 
 class RxModuleHA:
     """Home Assistant integration for Easywave RX modules.
-    
+
     Handles:
     - Device lifecycle (connect/disconnect)
     - Background listening for button presses
@@ -53,7 +53,7 @@ class RxModuleHA:
         event_callback: Optional[Callable[[ButtonEvent], None]] = None,
     ):
         """Initialize RX module HA integration.
-        
+
         Args:
             device_class: Device class to use (RX11Device, RX09Device, etc.)
             port: Serial port (e.g., "/dev/ttyUSB0" or "COM3")
@@ -68,17 +68,13 @@ class RxModuleHA:
 
     async def connect(self) -> bool:
         """Connect to RX module.
-        
+
         Returns:
             True if connection successful, False otherwise
         """
         try:
-            _LOGGER.info(
-                "Connecting to %s on port %s...", self.device_class.__name__, self.port
-            )
-            self.device = await self.device_class.create(
-                port=self.port, timeout=10.0
-            )
+            _LOGGER.info("Connecting to %s on port %s...", self.device_class.__name__, self.port)
+            self.device = await self.device_class.create(port=self.port, timeout=10.0)
             _LOGGER.info("Successfully connected to %s", self.device_class.__name__)
             return True
         except Exception as e:
@@ -103,7 +99,7 @@ class RxModuleHA:
 
     async def start_listening(self) -> None:
         """Start background listening for button presses.
-        
+
         The listening task will:
         - Listen indefinitely for button presses
         - Call event_callback for each press
@@ -174,7 +170,7 @@ class RxModuleHA:
 
 class HasButtonEntity:
     """Simplified Home Assistant button entity.
-    
+
     A real implementation would extend hass.helpers.entity.Entity
     """
 
@@ -200,11 +196,11 @@ class HasButtonEntity:
 
 async def setup_rx11_integration(hass_config: dict[str, Any]) -> Optional[RxModuleHA]:
     """Set up RX11 integration.
-    
+
     Args:
         hass_config: Home Assistant configuration dict with:
             - "port": Serial port for RX11
-    
+
     Returns:
         RxModuleHA instance if successful, None otherwise
     """
@@ -232,11 +228,11 @@ async def setup_rx11_integration(hass_config: dict[str, Any]) -> Optional[RxModu
 
 async def setup_rx09_integration(hass_config: dict[str, Any]) -> Optional[RxModuleHA]:
     """Set up RX09 integration.
-    
+
     Args:
         hass_config: Home Assistant configuration dict with:
             - "port": Serial port for RX09
-    
+
     Returns:
         RxModuleHA instance if successful, None otherwise
     """
@@ -264,7 +260,7 @@ async def setup_rx09_integration(hass_config: dict[str, Any]) -> Optional[RxModu
 
 def _on_button_event(event: ButtonEvent) -> None:
     """Callback for button events.
-    
+
     In real HA integration, this would:
     - Fire hass.bus.async_fire("easywave.button_pressed", {...})
     - Update entity state

@@ -26,7 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def ew_send_receive_rx11() -> None:
     """RX11: Complete Easywave send and receive workflow.
-    
+
     Steps:
     1. Get available Easywave gateways (EW_GET_FD_SERIAL)
     2. Send command to a gateway (EW_SEND_CMD)
@@ -40,9 +40,7 @@ async def ew_send_receive_rx11() -> None:
     try:
         # Create RX11 device
         print("📱 Creating RX11 USB Transceiver...")
-        device = await RX11Device.create(
-            port="/dev/ttyUSB0", timeout=5.0
-        )
+        device = await RX11Device.create(port="/dev/ttyUSB0", timeout=5.0)
         print("✓ Device created and connected\n")
 
         # Step 1: Get available Easywave gateways
@@ -54,7 +52,7 @@ async def ew_send_receive_rx11() -> None:
             )
             if result == RX11Device.ErrorCode.SUCCESS and gateway != b"\x00" * 16:
                 gateways.append(gateway)
-                print(f"   Found gateway {i+1}: {gateway.hex()}")
+                print(f"   Found gateway {i + 1}: {gateway.hex()}")
             else:
                 break
 
@@ -108,7 +106,7 @@ async def ew_send_receive_rx11() -> None:
 
 async def ew_send_receive_rx09() -> None:
     """RX09: Easywave send and receive workflow (ASCII protocol).
-    
+
     Note: RX09 has similar functionality but uses ASCII text protocol.
     Steps are the same as RX11.
     """
@@ -120,9 +118,7 @@ async def ew_send_receive_rx09() -> None:
     try:
         # Create RX09 device
         print("📱 Creating RX09 ASCII Receiver...")
-        device = await RX09Device.create(
-            port="/dev/ttyUSB0", timeout=5.0
-        )
+        device = await RX09Device.create(port="/dev/ttyUSB0", timeout=5.0)
         print("✓ Device created and connected\n")
 
         # RX09 has limited functionality compared to RX11

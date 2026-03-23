@@ -184,7 +184,7 @@ class DeviceFactory:
 
         if device_class is None:
             supported = DeviceRegistry.list()
-            raise ValueError(f"Unknown device ID: {device_id}. " f"Supported types: {supported}")
+            raise ValueError(f"Unknown device ID: {device_id}. Supported types: {supported}")
 
         # Create device instance with variant
         device = device_class(port=port, timeout=timeout, variant=variant, **kwargs)

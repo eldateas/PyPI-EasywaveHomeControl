@@ -886,10 +886,10 @@ class RxModule:
 
     def _remove_request(self, req: Request) -> bool:
         """Remove a request from queues or pending dict.
-        
+
         Args:
             req: Request to remove
-        
+
         Returns:
             True if request was found and removed, False otherwise
         """
@@ -903,10 +903,12 @@ class RxModule:
                         self._tx_req_queued[idx] = None
                         # Adjust pointers if needed
                         if idx == self._tx_req_queued_front:
-                            self._tx_req_queued_front = (self._tx_req_queued_front + 1) % self.MAX_REQUEST_QUEUED
+                            self._tx_req_queued_front = (
+                                self._tx_req_queued_front + 1
+                            ) % self.MAX_REQUEST_QUEUED
                         self._tx_req_queued_size -= 1
                         return True
-            
+
             # Try to remove from sent list
             if self._tx_req_sent_size > 0:
                 front = self._tx_req_sent_front
@@ -916,29 +918,31 @@ class RxModule:
                         self._tx_req_sent[idx] = None
                         # Adjust pointers if needed
                         if idx == self._tx_req_sent_front:
-                            self._tx_req_sent_front = (self._tx_req_sent_front + 1) % self.MAX_REQUEST_COUNT
+                            self._tx_req_sent_front = (
+                                self._tx_req_sent_front + 1
+                            ) % self.MAX_REQUEST_COUNT
                         self._tx_req_sent_size -= 1
                         return True
-            
+
             # Try to remove from pending dict
             if req.handle in self._req_pending:
                 del self._req_pending[req.handle]
                 return True
-        
+
         return False
 
     async def _wait_for_request(self, req: Request, timeout: float | None) -> bool:
         """Wait for a request with proper timeout and cleanup.
-        
+
         Args:
             req: Request to wait for
             timeout: Timeout in seconds, or None for indefinite waiting
-        
+
         Returns:
             True if request completed, False if timeout occurred
         """
         completed = await req.wait(timeout)
-        
+
         if not completed:
             # Timeout occurred - remove the request cleanly
             _LOGGER.warning(
@@ -947,7 +951,7 @@ class RxModule:
                 timeout if timeout is not None else -1,
             )
             self._remove_request(req)
-        
+
         return completed
 
     # ================================================================================================
@@ -1380,7 +1384,7 @@ class RxModule:
 
     async def query_hw_version(self, timeout: float = 5.0) -> tuple[int, bytes]:
         """Query hardware version.
-        
+
         Args:
             timeout: Query timeout in seconds. Use None for indefinite waiting.
         """
@@ -1399,7 +1403,7 @@ class RxModule:
 
     async def query_fw_version(self, timeout: float = 5.0) -> tuple[int, int, int, bool]:
         """Query firmware version.
-        
+
         Args:
             timeout: Query timeout in seconds. Use None for indefinite waiting.
         """
@@ -1435,7 +1439,7 @@ class RxModule:
 
     async def ew_get_fd_serial_request(self, index: int, timeout: float = 5.0) -> tuple[int, bytes]:
         """Get EW serial number at index.
-        
+
         Args:
             timeout: Request timeout in seconds. Use None for indefinite waiting.
         """
@@ -1452,12 +1456,14 @@ class RxModule:
             return req.icp.result, serial
         return req.icp.result, bytes(16)
 
-    async def ew_rcv_button_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
+    async def ew_rcv_button_request(
+        self, timeout: float | None = 30.0
+    ) -> tuple[int, int, bytes, bytes]:
         """Receive EW button press.
-        
+
         Args:
             timeout: Read timeout in seconds. Use None for indefinite waiting.
-        
+
         Returns:
             (result, info_type, transmitter, info_data)
         """
@@ -1477,7 +1483,7 @@ class RxModule:
 
     async def ew_send_cmd_request(self, gateway: bytes, button: int, timeout: float = 5.0) -> int:
         """Send EW command.
-        
+
         Args:
             timeout: Command timeout in seconds. Use None for indefinite waiting.
         """
@@ -1611,7 +1617,6 @@ class RxModule:
                         and len(self._send_cmd_loop_pending) < max_pending
                         and (self._send_cmd_loop_running or self._send_cmd_loop_drain)
                     ):
-
                         req = self._send_cmd_loop_queue.pop(0)
                         self._place_request(req)  # Send it
                         self._send_cmd_loop_pending.append(req)
@@ -1649,12 +1654,14 @@ class RxModule:
                 self._send_cmd_loop_queue.clear()
                 self._send_cmd_loop_pending.clear()
 
-    async def ew_rcv_ex_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
+    async def ew_rcv_ex_request(
+        self, timeout: float | None = 30.0
+    ) -> tuple[int, int, bytes, bytes]:
         """Receive EW extended telegram.
-        
+
         Args:
             timeout: Read timeout in seconds. Use None for indefinite waiting.
-        
+
         Returns:
             (result, info_type, receiver, info_data)
         """
@@ -1695,11 +1702,11 @@ class RxModule:
 
     async def ewb_add_nfilter_request(self, gateway: bytes, timeout: float = 5.0) -> int:
         """Add EWB gateway to filter.
-        
+
         Args:
             gateway: Gateway serial number (16 bytes)
             timeout: Request timeout in seconds
-        
+
         Returns:
             Error code
         """
@@ -1714,10 +1721,10 @@ class RxModule:
 
     async def ewb_clear_nfilter_request(self, timeout: float = 5.0) -> int:
         """Clear EWB filter.
-        
+
         Args:
             timeout: Request timeout in seconds
-        
+
         Returns:
             Error code
         """
@@ -1733,11 +1740,11 @@ class RxModule:
         self, gateway: bytes, timeout: float = 30.0
     ) -> tuple[int, int, bytes]:
         """Join EWB device.
-        
+
         Args:
             gateway: Gateway serial number (16 bytes)
             timeout: Request timeout in seconds (default 30s for learning)
-        
+
         Returns:
             (result, device_type, receiver_serial)
         """
@@ -1759,12 +1766,12 @@ class RxModule:
         self, gateway: bytes, receiver: bytes, timeout: float = 5.0
     ) -> int:
         """Remove EWB device.
-        
+
         Args:
             gateway: Gateway serial number (16 bytes)
             receiver: Receiver serial number (16 bytes)
             timeout: Request timeout in seconds
-        
+
         Returns:
             Error code
         """
@@ -1779,10 +1786,10 @@ class RxModule:
 
     async def ewb_rcv_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
         """Receive EWB telegram.
-        
+
         Args:
             timeout: Read timeout in seconds. Use None for indefinite waiting.
-        
+
         Returns:
             (result, info_type, receiver_transmitter, info_data)
         """
@@ -1809,14 +1816,14 @@ class RxModule:
         timeout: float = 5.0,
     ) -> tuple[int, int, bytes]:
         """Change EWB device state.
-        
+
         Args:
             gateway: Gateway serial number (16 bytes)
             receiver: Receiver serial number (16 bytes)
             desired_mode: Desired mode value
             desired_state: Desired state (4 bytes)
             timeout: Request timeout in seconds
-        
+
         Returns:
             (result, recent_mode, recent_state)
         """
@@ -1847,13 +1854,13 @@ class RxModule:
         timeout: float = 5.0,
     ) -> tuple[int, int, bytes]:
         """Query EWB device state.
-        
+
         Args:
             gateway: Gateway serial number (16 bytes)
             receiver: Receiver serial number (16 bytes)
             desired_mode: Mode to query
             timeout: Request timeout in seconds
-        
+
         Returns:
             (result, recent_mode, state)
         """
@@ -1883,7 +1890,7 @@ class RxModule:
         timeout: float = 30.0,
     ) -> tuple[int, int, bytes]:
         """Control EWB transmitter learning.
-        
+
         Args:
             gateway: Gateway serial number (16 bytes)
             receiver: Receiver serial number (16 bytes)
@@ -1891,7 +1898,7 @@ class RxModule:
             desired_mode: Desired mode
             desired_state: Desired state (4 bytes)
             timeout: Request timeout in seconds (default 30s for learning)
-        
+
         Returns:
             (result, recent_mode, recent_state)
         """

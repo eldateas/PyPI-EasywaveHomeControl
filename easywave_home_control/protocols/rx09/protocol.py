@@ -320,7 +320,9 @@ class RX09Protocol(BaseProtocol):
         response = await self._send_and_receive(command, timeout=timeout)
         return 0 if response == "OK" else 1
 
-    async def receive_telegramm(self, timeout: float | None = 30.0) -> tuple[int, int | None, str | None]:
+    async def receive_telegramm(
+        self, timeout: float | None = 30.0
+    ) -> tuple[int, int | None, str | None]:
         """Receive incoming telegramm (unsolicited).
 
         Args:
