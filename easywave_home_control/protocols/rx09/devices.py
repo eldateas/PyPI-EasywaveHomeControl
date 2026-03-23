@@ -46,32 +46,28 @@ class RX09Device(RX09Protocol, BaseProtocol):
 
     DEVICE_TYPE = "RX09"
     DEFAULT_BAUDRATE = 57600
-    DEFAULT_VARIANT = "basic"
     ErrorCode = ErrorCode  # Expose ErrorCode as class attribute
 
     def __init__(
         self,
         port: str,
         timeout: float = 5.0,
-        variant: str | None = None,
     ) -> None:
         """Initialize RX09 device.
 
         Args:
             port: Serial port path (e.g., '/dev/ttyUSB0', 'COM3')
             timeout: Read timeout in seconds
-            variant: Protocol variant (reserved for future use, must be 'basic')
         """
         # Initialize through RX09Protocol (which inherits BaseProtocol)
         RX09Protocol.__init__(
             self,
             port=port,
             timeout=timeout,
-            variant=variant or self.DEFAULT_VARIANT,
         )
 
     async def get_device_info(self) -> dict[str, Any]:
-        """Get device information including variant.
+        """Get device information.
 
         Returns:
             Dictionary with device metadata
@@ -80,7 +76,6 @@ class RX09Device(RX09Protocol, BaseProtocol):
             "device_type": self.DEVICE_TYPE,
             "port": self.port,
             "baudrate": self.BAUDRATE,
-            "variant": self.variant,
             "connection_type": "USB Serial",
             "protocol": "ASCII Text-based (Easywave Basic only)",
             "implementation": "Pure Async (asyncio)",
@@ -92,5 +87,5 @@ class RX09Device(RX09Protocol, BaseProtocol):
         Returns:
             Dictionary of function names and descriptions
         """
-        # RX09 only supports basic Easywave (no variants, no filtering needed)
+        # RX09 only supports basic Easywave
         return await super().get_available_functions()

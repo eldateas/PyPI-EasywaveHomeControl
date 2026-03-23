@@ -10,7 +10,6 @@ RX09 (RTR09) is an Easywave Basic only device with a completely different protoc
 This protocol does NOT support:
 - EasyWave Bidi (EWB)
 - Secwave (SEC)
-- Variants (only basic Easywave)
 
 Pure async implementation using asyncio.
 
@@ -53,19 +52,16 @@ class RX09Protocol(BaseProtocol):
         self,
         port: str,
         timeout: float = 5.0,
-        variant: str | None = None,
     ) -> None:
         """Initialize RX09 device.
 
         Args:
             port: Serial port path (e.g., '/dev/ttyUSB0', 'COM3')
             timeout: Read timeout in seconds
-            variant: Protocol variant (reserved for future use)
         """
         self.port = port
         self.baudrate = self.BAUDRATE
         self.timeout = timeout
-        self.variant = variant or "basic"
 
         # Async serial connection
         self._reader: asyncio.StreamReader | None = None
@@ -146,7 +142,7 @@ class RX09Protocol(BaseProtocol):
     # ================================================================================================
 
     async def get_device_info(self) -> dict[str, Any]:
-        """Get device information including variant.
+        """Get device information.
 
         Returns:
             Dictionary with device metadata
@@ -155,7 +151,6 @@ class RX09Protocol(BaseProtocol):
             "device_type": self.DEVICE_TYPE,
             "port": self.port,
             "baudrate": self.BAUDRATE,
-            "variant": self.variant,
             "connection_type": "USB Serial",
             "protocol": "ASCII Text-based (Easywave Basic only)",
         }

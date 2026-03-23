@@ -41,8 +41,6 @@ from .protocols.rx11_rx2x import (
     RX21Device,
     RX22Device,
     RX25Device,
-    RxModule,
-    RxModuleDevice,
 )
 from .protocols.rx11_rx2x.protocol import ErrorCode as RX11ErrorCode
 
@@ -74,8 +72,6 @@ __all__ = [
     "RX11ErrorCode",
     "RX09ErrorCode",
     # RxModule family devices
-    "RxModule",
-    "RxModuleDevice",
     "RX11Device",
     "RX21Device",
     "RX22Device",

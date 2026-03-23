@@ -1,7 +1,7 @@
 """Device registry and factory for EASYWAVE modules.
 
-Central registry for all device types and variants.
-Enables string-based device creation: "RX11-EW", "RX25-DEV", etc.
+Central registry for all supported device types.
+Enables string-based device creation: "RX11", "RX25", etc.
 """
 
 from typing import Any
@@ -19,34 +19,17 @@ from .protocols.rx11_rx2x import (
 class DeviceRegistry:
     """Registry of supported device types and their factories.
 
-    Format: "DEVICE_TYPE-VARIANT" -> Device class
-    Example: "RX11-EW" -> RX11Device with ew variant
+    Example: "RX11" -> RX11Device
     """
 
     _REGISTRY: dict[str, type] = {
-        # RxModule family - RX11
+        # RxModule family - RX11, RX21, RX22, RX25
         "RX11": RX11Device,
-        "RX11-BASIC": RX11Device,
-        "RX11-EW": RX11Device,
-        "RX11-DEV": RX11Device,
-        # RxModule family - RX21
         "RX21": RX21Device,
-        "RX21-BASIC": RX21Device,
-        "RX21-EW": RX21Device,
-        "RX21-DEV": RX21Device,
-        # RxModule family - RX22
         "RX22": RX22Device,
-        "RX22-BASIC": RX22Device,
-        "RX22-EW": RX22Device,
-        "RX22-DEV": RX22Device,
-        # RxModule family - RX25
         "RX25": RX25Device,
-        "RX25-BASIC": RX25Device,
-        "RX25-EW": RX25Device,
-        "RX25-DEV": RX25Device,
-        # RX09 family (ASCII text protocol, basic Easywave only)
+        # RX09 family (ASCII text protocol)
         "RX09": RX09Device,
-        "RX09-BASIC": RX09Device,
     }
 
     @classmethod
@@ -56,13 +39,7 @@ class DeviceRegistry:
         Args:
             device_id: Device identifier (e.g., "RX11-EW", "RX09-V1")
             device_class: Device class to instantiate
-
-        Raises:
-            TypeError: If device_class is not a BaseProtocol subclass
         """
-        if not issubclass(device_class, BaseProtocol):
-            raise TypeError(f"device_class must be a BaseProtocol subclass, got {device_class}")
-
         cls._REGISTRY[device_id.upper()] = device_class
 
     @classmethod
@@ -98,47 +75,16 @@ class DeviceRegistry:
         """
         return list(cls._REGISTRY.keys())
 
-    @classmethod
-    def get_supported_variants(cls) -> dict[str, list[str]]:
-        """Get all supported device types and their variants.
-
-        Returns:
-            Dictionary mapping device types to variant list
-            e.g., {"RX11": ["BASIC", "EW", "DEV"], "RX25": [...]}
-        """
-        variants: dict[str, list[str]] = {}
-
-        for device_id in cls._REGISTRY.keys():
-            if "-" in device_id:
-                device_type, variant = device_id.split("-", 1)
-            else:
-                device_type = device_id
-                variant = "DEFAULT"
-
-            if device_type not in variants:
-                variants[device_type] = []
-
-            if variant not in variants[device_type]:
-                variants[device_type].append(variant)
-
-        return variants
-
 
 class DeviceFactory:
     """Factory for creating EASYWAVE devices.
 
-    Supports string-based device creation with variants:
-    - "RX11" or "RX11-DEFAULT" (uses DEFAULT_VARIANT)
-    - "RX11-EW" (EasyWave variant)
-    - "RX11-DEV" (Developer variant)
-    - "RX25-BASIC" (Basic variant)
-
     Example:
-        >>> device = DeviceFactory.create("RX11-EW", port="/dev/ttyUSB0")
+        >>> device = DeviceFactory.create("RX11", port="/dev/ttyUSB0")
         >>> device.ping_request()
         >>>
         >>> available = device.get_available_functions()
-        >>> print(f"RX11-EW supports: {list(available.keys())}")
+        >>> print(f"RX11 supports: {list(available.keys())}")
     """
 
     @classmethod
@@ -152,7 +98,7 @@ class DeviceFactory:
         """Create a device instance.
 
         Args:
-            device_id: Device identifier (e.g., "RX11-EW", "RX25-DEV")
+            device_id: Device identifier (e.g., "RX11", "RX25")
             port: Serial port path (e.g., "/dev/ttyUSB0")
             timeout: Read timeout in seconds (default: 5.0)
             **kwargs: Additional device-specific parameters
@@ -166,18 +112,13 @@ class DeviceFactory:
             OSError: If port is invalid
 
         Example:
-            >>> # Create RX11 with EasyWave variant
-            >>> device = DeviceFactory.create("RX11-EW", port="/dev/ttyUSB0")
+            >>> # Create RX11
+            >>> device = DeviceFactory.create("RX11", port="/dev/ttyUSB0")
             >>>
-            >>> # Create RX25 with developer variant
-            >>> device = DeviceFactory.create("RX25-DEV", port="/dev/ttyAMA0", timeout=10.0)
+            >>> # Create RX25
+            >>> device = DeviceFactory.create("RX25", port="/dev/ttyAMA0", timeout=10.0)
         """
         device_id_upper = device_id.upper()
-
-        # Parse variant from device ID (format: "DEVICE-VARIANT")
-        variant: str | None = None
-        if "-" in device_id_upper:
-            _, variant = device_id_upper.split("-", 1)
 
         # Get device class from registry
         device_class = DeviceRegistry.get(device_id_upper)
@@ -186,8 +127,8 @@ class DeviceFactory:
             supported = DeviceRegistry.list()
             raise ValueError(f"Unknown device ID: {device_id}. Supported types: {supported}")
 
-        # Create device instance with variant
-        device = device_class(port=port, timeout=timeout, variant=variant, **kwargs)
+        # Create device instance
+        device = device_class(port=port, timeout=timeout, **kwargs)  # type: ignore[call-arg]
 
         return device
 
@@ -199,42 +140,6 @@ class DeviceFactory:
             List of device identifiers
         """
         return DeviceRegistry.list()
-
-    @classmethod
-    def get_device_variants(cls) -> dict[str, list[str]]:
-        """Get all supported device types and their variants.
-
-        Returns:
-            Dictionary mapping device types to variant list
-
-        Example:
-            >>> variants = DeviceFactory.get_device_variants()
-            >>> print(variants)
-            {'RX11': ['BASIC', 'EW', 'DEV', 'DEFAULT'],
-             'RX21': ['BASIC', 'EW', 'DEV', 'DEFAULT'],
-             ...}
-        """
-        return DeviceRegistry.get_supported_variants()
-
-    @classmethod
-    def get_variant_info(cls, variant: str) -> dict[str, str]:
-        """Get available functions for a variant.
-
-        Note: Variant filtering is not yet implemented.
-
-        Args:
-            variant: Variant name (e.g., "ew", "dev", "basic")
-
-        Returns:
-            Dictionary of available functions and descriptions
-
-        Raises:
-            NotImplementedError: Variant system not yet implemented
-        """
-        raise NotImplementedError(
-            "Variant filtering not yet implemented. "
-            "All devices currently support the full RxModule API."
-        )
 
     @classmethod
     def register_device(

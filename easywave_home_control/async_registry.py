@@ -23,23 +23,10 @@ _LOGGER = logging.getLogger(__name__)
 # Device type aliases
 ASYNC_DEVICE_ID = Literal[
     "RX11",
-    "RX11-BASIC",
-    "RX11-EW",
-    "RX11-DEV",
     "RX21",
-    "RX21-BASIC",
-    "RX21-EW",
-    "RX21-DEV",
     "RX22",
-    "RX22-BASIC",
-    "RX22-EW",
-    "RX22-DEV",
     "RX25",
-    "RX25-BASIC",
-    "RX25-EW",
-    "RX25-DEV",
     "RX09",
-    "RX09-BASIC",
 ]
 
 # Device registry
@@ -85,7 +72,6 @@ class AsyncDeviceFactory:
         device_id: ASYNC_DEVICE_ID,
         port: str,
         timeout: float = 5.0,
-        variant: str | None = None,
     ) -> BaseProtocol:
         """Create an async device instance.
 
@@ -93,7 +79,6 @@ class AsyncDeviceFactory:
             device_id: Device type (e.g., "RX22", "RX09")
             port: Serial port path (e.g., "/dev/ttyAMA0")
             timeout: Default timeout for device operations
-            variant: Device variant (optional, inferred from device_id)
 
         Returns:
             Async device instance ready to use
@@ -125,10 +110,6 @@ class AsyncDeviceFactory:
         """
         device_id_upper = device_id.upper()
 
-        # Parse variant from device ID if present
-        if variant is None and "-" in device_id_upper:
-            _, variant = device_id_upper.split("-", 1)
-
         # Get device class
         device_class = _DEVICE_REGISTRY.get(device_id_upper)
 
@@ -143,7 +124,6 @@ class AsyncDeviceFactory:
         device = device_class(
             port=port,
             timeout=timeout,
-            variant=variant,
         )
 
         # Connect to device
@@ -173,31 +153,24 @@ class AsyncDeviceFactory:
 
     @staticmethod
     def get_device_variants(device_id: str) -> list[str]:
-        """Get variants for a specific device type.
+        """Get supported device types.
 
         Args:
             device_id: Device type (e.g., "RX22")
 
         Returns:
-            List of variant identifiers
+            List of supported device type identifiers
 
         Example:
             ```python
             variants = AsyncDeviceFactory.get_device_variants("RX22")
-            # ['BASIC', 'EW', 'DEV']  (and DEFAULT)
+            # ['RX22']
             ```
         """
         device_id_upper = device_id.upper()
 
-        # Extract base device type
-        if "-" in device_id_upper:
-            base_type = device_id_upper.split("-")[0]
-        else:
-            base_type = device_id_upper
+        # Return the device type if it exists
+        if device_id_upper in _DEVICE_REGISTRY:
+            return [device_id_upper]
 
-        # Find all variants for this base type
-        variants = {
-            k.split("-")[1] for k in _DEVICE_REGISTRY.keys() if k.startswith(base_type + "-")
-        }
-
-        return sorted(variants)
+        return []

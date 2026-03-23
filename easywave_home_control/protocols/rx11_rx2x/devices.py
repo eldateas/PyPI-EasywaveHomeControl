@@ -23,32 +23,28 @@ class RxModuleDevice(RxModule, BaseProtocol):
 
     DEVICE_TYPE: str = "RX_BASE"
     DEFAULT_BAUDRATE: int = 115200
-    DEFAULT_VARIANT: str = "ew"
     ErrorCode = ErrorCode  # Expose ErrorCode as class attribute
 
     def __init__(
         self,
         port: str,
         timeout: float = 5.0,
-        variant: str | None = None,
     ) -> None:
         """Initialize RxModule device.
 
         Args:
             port: Serial port path
             timeout: Read timeout in seconds (stored but not used by RxModule)
-            variant: Protocol variant (ew, dev, basic, pro)
         """
         self.port = port
         self.baudrate = self.DEFAULT_BAUDRATE  # Fixed at device default
         self.timeout = timeout
-        self.variant = variant or self.DEFAULT_VARIANT
 
         # Initialize RxModule with device parameters
         RxModule.__init__(self, port=port, baudrate=self.baudrate)
 
     async def get_device_info(self) -> dict[str, Any]:
-        """Get device information including variant.
+        """Get device information.
 
         Returns:
             Dictionary with device metadata
@@ -57,7 +53,6 @@ class RxModuleDevice(RxModule, BaseProtocol):
             "device_type": self.DEVICE_TYPE,
             "port": self.port,
             "baudrate": self.baudrate,
-            "variant": self.variant,
             "connection_type": "USB Serial" if "USB" in self.DEVICE_TYPE else "Direct Serial UART",
         }
 
@@ -67,8 +62,6 @@ class RxModuleDevice(RxModule, BaseProtocol):
         Returns:
             Dictionary of function names and descriptions
         """
-        # TODO: Implement variant-based function filtering
-        # For now return all available functions
         return {
             # System functions
             "ping": "Ping device",
