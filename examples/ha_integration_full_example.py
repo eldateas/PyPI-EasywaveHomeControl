@@ -12,7 +12,7 @@ Features:
 - Error recovery and reconnection
 
 This example shows the pattern for creating a Home Assistant
-custom component using the easywave-rx-module library.
+custom component using the easywave-home-control library.
 """
 
 import asyncio
@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Union
 
-from easywave_rx_module import RX09Device, RX11Device
+from easywave_home_control import RX09Device, RX11Device
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-03-20
 
 ### Added
-- Initial release of easywave-rx-module library
+- Initial release of easywave-home-control library
 - Pure Python implementation of RxModule protocol for EASYWAVE RX11 transceivers
 - Full packet encoding/decoding with byte stuffing
 - Request/response handling with proper synchronization

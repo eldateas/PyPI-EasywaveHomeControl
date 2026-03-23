@@ -65,7 +65,7 @@ class AsyncDeviceFactory:
 
     Example (HA integration):
         ```python
-        from easywave_rx_module import AsyncDeviceFactory
+        from easywave_home_control import AsyncDeviceFactory
 
         # Simple and clean
         device = await AsyncDeviceFactory.create(

@@ -1,6 +1,6 @@
-# EASYWAVE RX Module Library
+# EASYWAVE Home Control
 
-Pure Python async/await implementation for communicating with EASYWAVE radio modules (RX11, RX21, RX22, RX25, RX09).
+Pure Python async/await implementation for controlling EASYWAVE radio modules (RX11, RX21, RX22, RX25, RX09).
 
 Optimized for **Home Assistant integration** with 100% non-blocking async API.
 
@@ -17,7 +17,7 @@ Optimized for **Home Assistant integration** with 100% non-blocking async API.
 ## Installation
 
 ```bash
-pip install easywave-rx-module
+pip install easywave-home-control
 ```
 
 ## Quick Start
@@ -28,7 +28,7 @@ All devices use the unified `.create()` factory method:
 
 ```python
 import asyncio
-from easywave_rx_module import RX11Device, RX09Device
+from easywave_home_control import RX11Device, RX09Device
 
 async def main():
     # Create and automatically connect to device
@@ -81,7 +81,7 @@ asyncio.run(main())
 #### RxModule Devices (Binary Protocol, 115200 baud)
 
 ```python
-from easywave_rx_module import RX11Device, RX21Device, RX22Device, RX25Device
+from easywave_home_control import RX11Device, RX21Device, RX22Device, RX25Device
 
 # All RxModule devices use the same interface
 device = await RX11Device.create(port="/dev/ttyUSB0")
@@ -107,7 +107,7 @@ else:
 #### RX09 Device (ASCII Protocol, 57600 baud)
 
 ```python
-from easywave_rx_module import RX09Device
+from easywave_home_control import RX09Device
 
 device = await RX09Device.create(port="/dev/ttyUSB0")
 
@@ -145,7 +145,7 @@ Each device family has device-specific error code enums:
 
 ```python
 # RxModule devices (RX11, RX21, RX22, RX25)
-from easywave_rx_module import RX11Device
+from easywave_home_control import RX11Device
 
 if result == RX11Device.ErrorCode.SUCCESS:
     print("Command successful")
@@ -155,7 +155,7 @@ elif result == RX11Device.ErrorCode.ERR_FAILSTATE:
     print("Device in failure state")
 
 # RX09 device
-from easywave_rx_module import RX09Device
+from easywave_home_control import RX09Device
 
 if result == RX09Device.ErrorCode.SUCCESS:
     print("Command successful")

@@ -17,7 +17,7 @@ Device Families:
         - RX09: Basic Receiver (57600 bps, Easywave Basic only)
 
 Quick Start (Home Assistant):
-    >>> from easywave_rx_module import AsyncDeviceFactory
+    >>> from easywave_home_control import AsyncDeviceFactory
     >>>
     >>> device = await AsyncDeviceFactory.create("RX22", port="/dev/ttyAMA0")
     >>> info = await device.get_device_info()

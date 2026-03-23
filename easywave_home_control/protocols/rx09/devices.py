@@ -29,7 +29,7 @@ class RX09Device(RX09Protocol, BaseProtocol):
     Example:
         ```python
         import asyncio
-        from easywave_rx_module import RX09Device
+        from easywave_home_control import RX09Device
 
         async def main():
             device = await RX09Device.create(port='/dev/ttyUSB0')

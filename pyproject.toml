@@ -3,9 +3,9 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "easywave-rx-module"
+name = "easywave-home-control"
 version = "1.0.0"
-description = "Pure Python RxModule protocol implementation for EASYWAVE RX11 USB transceivers"
+description = "Pure Python async/await implementation for controlling EASYWAVE radio modules (RX11, RX21, RX22, RX25, RX09)"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
@@ -50,7 +50,7 @@ Documentation = "https://www.home-assistant.io/integrations/easywave"
 Issues = "https://github.com/home-assistant/core/issues"
 
 [tool.setuptools]
-packages = ["easywave_rx_module"]
+packages = ["easywave_home_control"]
 
 [tool.black]
 line-length = 100

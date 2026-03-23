@@ -1,6 +1,6 @@
 # Examples
 
-This directory contains example scripts demonstrating how to use the easywave-rx-module library.
+This directory contains example scripts demonstrating how to use the easywave-home-control library.
 
 All examples use the **Async API** with the new unified `.create()` factory method.
 
@@ -18,7 +18,7 @@ All examples use the **Async API** with the new unified `.create()` factory meth
 
 ```bash
 # Install the library (if not already installed)
-pip install easywave-rx-module
+pip install easywave-home-control
 
 # Or from source:
 cd ..
@@ -159,7 +159,7 @@ rx11.device.register_rcv_callback(on_button_event)
 ### Creating Devices
 
 ```python
-from easywave_rx_module import RX11Device, RX21Device, RX22Device, RX25Device, RX09Device
+from easywave_home_control import RX11Device, RX21Device, RX22Device, RX25Device, RX09Device
 
 # RxModule devices (binary protocol, 115200 baud)
 device = await RX11Device.create(port="/dev/ttyUSB0", timeout=5.0)
@@ -534,7 +534,7 @@ finally:
 ### Prerequisites
 
 ```bash
-pip install easywave-rx-module
+pip install easywave-home-control
 python3 -m pip install --upgrade pip
 ```
 
@@ -703,7 +703,7 @@ python test_rx09.py
 ### Creating Devices (Async)
 
 ```python
-from easywave_rx_module import AsyncDeviceFactory
+from easywave_home_control import AsyncDeviceFactory
 
 async def example():
     # RxModule family (115200 baud)
@@ -737,7 +737,7 @@ For async applications, you can use the threading model and integrate with async
 
 ```python
 import asyncio
-from easywave_rx_module import RxModule
+from easywave_home_control import RxModule
 
 async def main():
     rx = RxModule(port="/dev/ttyACM0")

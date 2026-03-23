@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from easywave_rx_module import RX09Device, RX11Device
+from easywave_home_control import RX09Device, RX11Device
 
 logging.basicConfig(
     level=logging.INFO,
