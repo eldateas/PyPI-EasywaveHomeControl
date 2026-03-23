@@ -533,7 +533,6 @@ class RxModule:
         self._last_successful_communication = time.time()
         self._reconnect_attempts = 0
         self._reconnect_delay_base = 1.0
-        self._health_check_interval = 30.0
 
         # Startup tolerance - ignore decode errors on initial connection
         self._startup_tolerance_until: float = 0.0
@@ -548,13 +547,14 @@ class RxModule:
         self._rx_raw_buffer = bytearray()
         self._rx_stuffing = False
 
-        # Threading
+        # Threading & Async
         self._protocol_lock = threading.RLock()
         self._file_lock = threading.Lock()
-        self._serial_handler_thread: threading.Thread | None = None
+        self._serial_handler_ready = threading.Event()  # Signals when handler is actually running
+        self._serial_handler_task: asyncio.Task | None = None  # Set during connect()
 
         # Send command loop (for dead man's switch)
-        self._send_cmd_loop_thread: threading.Thread | None = None
+        self._send_cmd_loop_task: asyncio.Task[None] | None = None
         self._send_cmd_loop_running = False
         self._send_cmd_loop_gateway: bytes | None = None
         self._send_cmd_loop_button: int | None = None
@@ -594,20 +594,61 @@ class RxModule:
         self._reconnect_callback = callback
 
     def _notify_disconnect(self) -> None:
-        """Notify the disconnect callback if registered."""
-        if self._disconnect_callback is not None:
-            try:
-                self._disconnect_callback()
-            except (OSError, RuntimeError) as e:
-                _LOGGER.warning("Error calling disconnect callback: %s", e)
+        """Notify the disconnect callback if registered.
+
+        Supports both sync and async callbacks. If async, schedules as task.
+        """
+        if self._disconnect_callback is None:
+            return
+
+        try:
+            result = self._disconnect_callback()
+            # If callback is async (returns coroutine), schedule it
+            if hasattr(result, '__await__'):
+                try:
+                    asyncio.create_task(result)  # type: ignore[arg-type]
+                except RuntimeError:
+                    # No event loop running - can't schedule async callback
+                    _LOGGER.debug("Cannot schedule async disconnect callback without event loop")
+        except (OSError, RuntimeError) as e:
+            _LOGGER.warning("Error in disconnect callback: %s", e)
 
     def _notify_reconnect(self) -> None:
-        """Notify the reconnect callback if registered."""
-        if self._reconnect_callback is not None:
-            try:
-                self._reconnect_callback()
-            except (OSError, RuntimeError) as e:
-                _LOGGER.warning("Error calling reconnect callback: %s", e)
+        """Notify the reconnect callback if registered.
+
+        Supports both sync and async callbacks. If async, schedules as task.
+        """
+        if self._reconnect_callback is None:
+            return
+
+        try:
+            result = self._reconnect_callback()
+            # If callback is async (returns coroutine), schedule it
+            if hasattr(result, '__await__'):
+                try:
+                    asyncio.create_task(result)  # type: ignore[arg-type]
+                except RuntimeError:
+                    # No event loop running - can't schedule async callback
+                    _LOGGER.debug("Cannot schedule async reconnect callback without event loop")
+        except (OSError, RuntimeError) as e:
+            _LOGGER.warning("Error in reconnect callback: %s", e)
+
+    def _transition_to_error(self) -> bool:
+        """Atomically transition to hardware error state.
+
+        Sets _connected, _state_good, _connection_healthy, _hardware_error.
+
+        Returns:
+            True if this is a NEW disconnect (was previously connected), so the
+            caller knows whether to fire the disconnect callback exactly once.
+        """
+        with self._protocol_lock:
+            was_connected = self._connected
+            self._state_good = False
+            self._connection_healthy = False
+            self._hardware_error = True
+            self._connected = False
+        return bool(was_connected)
 
     @property
     def is_connected(self) -> bool:
@@ -625,10 +666,10 @@ class RxModule:
     def connection_status(self) -> str:
         """Get detailed connection status."""
         with self._protocol_lock:
-            if not self._connected:
-                return "disconnected"
             if self._hardware_error:
                 return "hardware_error"
+            if not self._connected:
+                return "disconnected"
             if not self._connection_healthy:
                 return "reconnecting"
             if not self._state_good:
@@ -669,7 +710,15 @@ class RxModule:
 
             # Start serial handler thread IMMEDIATELY before any communication
             self._shutdown_requested = False
+            self._serial_handler_ready.clear()  # Reset the event
             self._serial_handler_task = asyncio.create_task(self._serial_handler())
+
+            # Wait for handler to actually start running (threading.Event, not asyncio)
+            # Give it 1 second to start
+            for _ in range(100):  # 100 * 10ms = 1 second timeout
+                if self._serial_handler_ready.is_set():
+                    break
+                await asyncio.sleep(0.01)
 
             # Reset state
             self._reset_queues()
@@ -967,11 +1016,7 @@ class RxModule:
         try:
             if not self._is_serial_port_valid():
                 _LOGGER.error("Serial port no longer valid (USB disconnected?)")
-                with self._protocol_lock:
-                    self._state_good = False
-                    self._connection_healthy = False
-                    self._connected = False
-                    self._hardware_error = True
+                if self._transition_to_error():
                     self._notify_disconnect()
                 return
 
@@ -995,10 +1040,8 @@ class RxModule:
         except _SERIAL_ERRORS as e:
             if not self._shutdown_requested:
                 _LOGGER.error("Serial error during write: %s", e)
-                with self._protocol_lock:
-                    self._state_good = False
-                    self._connection_healthy = False
-                    self._hardware_error = True
+                if self._transition_to_error():
+                    self._notify_disconnect()
 
     def _is_serial_port_valid(self) -> bool:
         """Check if the serial port is still valid."""
@@ -1024,26 +1067,18 @@ class RxModule:
 
     async def _serial_handler(self):
         """Main serial handler thread."""
-        last_health_check = time.time()
+        # Signal that handler is ready
+        self._serial_handler_ready.set()
 
         while not self._shutdown_requested:
             try:
-                now = time.time()
-                # Health check periodically
-                if now - last_health_check > self._health_check_interval:
-                    self._check_connection_health()
-                    last_health_check = now
-
-                    if not self._is_serial_port_valid():
-                        if not self._shutdown_requested:
-                            _LOGGER.error("Serial port invalid - USB device may have been removed")
-                            with self._protocol_lock:
-                                self._state_good = False
-                                self._connection_healthy = False
-                                self._hardware_error = True
-                                self._connected = False
+                # Check if serial port is still valid
+                if not self._is_serial_port_valid():
+                    if not self._shutdown_requested:
+                        _LOGGER.error("Serial port invalid - USB device may have been removed")
+                        if self._transition_to_error():
                             self._notify_disconnect()
-                        break
+                    break
 
                 # Read available bytes
                 try:
@@ -1055,12 +1090,8 @@ class RxModule:
                         self._process_received_byte(byte)
                 except _SERIAL_ERRORS:
                     if not self._shutdown_requested:
-                        with self._protocol_lock:
-                            self._state_good = False
-                            self._connection_healthy = False
-                            self._hardware_error = True
-                            self._connected = False
-                        self._notify_disconnect()
+                        if self._transition_to_error():
+                            self._notify_disconnect()
                     break
 
                 self._process_queued_requests()
@@ -1069,12 +1100,8 @@ class RxModule:
             except _SERIAL_ERRORS as e:
                 if not self._shutdown_requested:
                     _LOGGER.warning("Serial handler error: %s", e)
-                    with self._protocol_lock:
-                        self._state_good = False
-                        self._connection_healthy = False
-                        self._hardware_error = True
-                        self._connected = False
-                    self._notify_disconnect()
+                    if self._transition_to_error():
+                        self._notify_disconnect()
                 break
 
     def _process_received_byte(self, byte: int):
@@ -1313,30 +1340,6 @@ class RxModule:
                     self._enqueue_sent(req)
                     self._write_to_buffer(req.irp, req.req_str)
 
-    def _check_connection_health(self):
-        """Check if connection is healthy."""
-        with self._protocol_lock:
-            if not self._connection_healthy:
-                return
-
-            time_since_comm = time.time() - self._last_successful_communication
-            irps_waiting = self._tx_req_sent_size
-            non_continuous_pending = sum(
-                1 for req in self._req_pending.values() if not req.is_continuous
-            )
-
-            if time_since_comm > self._health_check_interval and (
-                irps_waiting > 0 or non_continuous_pending > 0
-            ):
-                _LOGGER.error(
-                    "RX11 Connection UNHEALTHY - no response for %.1fs! "
-                    "(IRPs without IPP=%d, Commands without ICP=%d)",
-                    time_since_comm,
-                    irps_waiting,
-                    non_continuous_pending,
-                )
-                self._state_good = False
-
     def _mark_communication_success(self):
         """Mark that we had a successful communication."""
         with self._protocol_lock:
@@ -1424,13 +1427,21 @@ class RxModule:
         return req.icp.result, 0, 0, False
 
     async def ping(self, timeout: float = 5.0) -> int:
-        """Ping the module.
+        """Ping the module by sending an intentionally undefined command (0xF0).
+
+        The RxModule firmware does not know function code 0xF0 and responds with
+        ERR_INVALID_REQUEST (0x03).  Receiving *any* ICP response — even an error
+        — proves the module is alive and the serial link is working.  This method
+        therefore maps ERR_INVALID_REQUEST -> SUCCESS so that callers can treat a
+        non-zero return value as a genuine communication failure.
 
         Args:
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds waiting for the module's response.
 
         Returns:
-            ErrorCode.SUCCESS (0) if ping succeeds, ErrorCode.ERR_RF_TIMEOUT if timeout
+            ErrorCode.SUCCESS (0)  — module responded (link is healthy)
+            ErrorCode.ERR_RF_TIMEOUT — no response within *timeout* seconds
+            Any other ErrorCode   — unexpected protocol or hardware error
         """
         irp = IRP(function=FunctionCode.PING_RCV, params=b"")
         req = self._create_request(irp, 1, 3, "PING_RCV")
@@ -1439,6 +1450,8 @@ class RxModule:
         if not await self._wait_for_request(req, timeout):
             return ErrorCode.ERR_RF_TIMEOUT
 
+        if req.icp.result == ErrorCode.ERR_INVALID_REQUEST:
+            return ErrorCode.SUCCESS
         return req.icp.result
 
     # ================================================================================================
@@ -1513,12 +1526,9 @@ class RxModule:
         self._send_cmd_loop_button = button
         self._send_cmd_loop_running = True
 
-        self._send_cmd_loop_thread = threading.Thread(
-            target=self._ew_send_cmd_loop,
-            daemon=True,
-            name="RxModule-SendCmdLoop",
+        self._send_cmd_loop_task = asyncio.create_task(
+            self._ew_send_cmd_loop(), name="RxModule-SendCmdLoop"
         )
-        self._send_cmd_loop_thread.start()
 
     async def stop_ew_send_cmd_loop(self) -> None:
         """Stop continuous EW send command loop.
@@ -1529,9 +1539,12 @@ class RxModule:
         # Signal drain mode: process remaining requests before exiting
         self._send_cmd_loop_drain = True
 
-        if self._send_cmd_loop_thread:
-            self._send_cmd_loop_thread.join(timeout=2.0)
-            self._send_cmd_loop_thread = None
+        if self._send_cmd_loop_task and not self._send_cmd_loop_task.done():
+            try:
+                await asyncio.wait_for(self._send_cmd_loop_task, timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self._send_cmd_loop_task.cancel()
+            self._send_cmd_loop_task = None
 
         # Reset drain flag and clear any remaining requests
         self._send_cmd_loop_drain = False

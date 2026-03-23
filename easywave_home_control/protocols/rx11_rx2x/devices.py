@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from ...protocols.base import BaseProtocol
-from .protocol import RxModule, ErrorCode
+from .protocol import ErrorCode, RxModule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,21 +97,24 @@ class RxModuleDevice(RxModule, BaseProtocol):
     async def ping_request(self, timeout: float = 5.0) -> bool:
         """Ping RX Module device (required by BaseProtocol interface).
 
+        Sends an intentionally undefined command (function code 0xF0) to the
+        module.  The firmware replies with ERR_INVALID_REQUEST, which confirms
+        the module is reachable.  Any ICP response is treated as success;
+        only a timeout or a hardware/protocol error returns False.
+
         Args:
-            timeout: Request timeout in seconds
+            timeout: Seconds to wait for the module's response.
 
         Returns:
-            True if device responded successfully, False otherwise
+            True  — module responded; serial link and firmware are healthy.
+            False — no response (timeout) or hardware/protocol failure.
         """
         result = await self.ping(timeout)
         return result == 0
 
     async def disconnect(self) -> None:
-        """Disconnect from device and clear resources.
-
-        This method closes the serial connection and cleans up resources.
-        """
-        self._connected = False
+        """Disconnect from device and close the serial connection."""
+        await self.dispose()
         _LOGGER.info("RxModule disconnected from %s", self.port)
 
 

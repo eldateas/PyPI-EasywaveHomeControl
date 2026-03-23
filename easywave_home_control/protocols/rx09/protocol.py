@@ -191,7 +191,7 @@ class RX09Protocol(BaseProtocol):
         Returns:
             True if device responded successfully, False otherwise
         """
-        result = await self.ping(int(timeout))
+        result = await self.ping(timeout)
         return result == 0
 
     # ================================================================================================

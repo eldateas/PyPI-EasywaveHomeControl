@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=65.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "easywave-home-control"
 version = "0.1.0"
 description = "Pure Python async/await implementation for controlling EASYWAVE radio modules (RX11, RX21, RX22, RX25, RX09)"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [
     {name = "ELDAT EaS GmbH", email = "info@eldat.de"},
 ]
@@ -15,7 +15,6 @@ keywords = ["easywave", "rx11", "transceiver", "usb", "serial"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -49,8 +48,9 @@ Repository = "https://github.com/home-assistant/core/tree/dev/homeassistant/comp
 Documentation = "https://www.home-assistant.io/integrations/easywave"
 Issues = "https://github.com/home-assistant/core/issues"
 
-[tool.setuptools]
-packages = ["easywave_home_control"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["easywave_home_control*"]
 
 [tool.black]
 line-length = 100
