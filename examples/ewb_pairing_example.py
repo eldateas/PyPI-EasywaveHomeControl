@@ -17,7 +17,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from easywave_home_control import RX11Device
+from easywave_home_control import RX11Device, RX11ErrorCode
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,7 +56,7 @@ async def ewb_pair_and_learn_device() -> None:
             index=0, timeout=2.0
         )
 
-        if result != RX11Device.ErrorCode.SUCCESS or gateway_serial == b"\x00" * 16:
+        if result != RX11ErrorCode.SUCCESS or gateway_serial == b"\x00" * 16:
             print("⚠️  No gateway found or error loading serial")
             return
 
@@ -68,7 +68,7 @@ async def ewb_pair_and_learn_device() -> None:
             gateway=gateway_serial, timeout=5.0
         )
 
-        if result == RX11Device.ErrorCode.SUCCESS:
+        if result == RX11ErrorCode.SUCCESS:
             print("✓ Filter configured with gateway serial\n")
         else:
             print(f"⚠️  Filter setup failed: error {result}\n")
@@ -82,7 +82,7 @@ async def ewb_pair_and_learn_device() -> None:
             gateway=gateway_serial, timeout=30.0
         )
 
-        if result == RX11Device.ErrorCode.SUCCESS:
+        if result == RX11ErrorCode.SUCCESS:
             print("✓ Device learned successfully!\n")
             print(f"  Device Type:       0x{device_type:02X}")
             print(f"  Receiver Serial:   {receiver_serial.hex()}\n")
@@ -126,7 +126,7 @@ async def ewb_listen_state_changes() -> None:
                     timeout=None  # No timeout - listen indefinitely
                 )
 
-                if result == RX11Device.ErrorCode.SUCCESS:
+                if result == RX11ErrorCode.SUCCESS:
                     print(f"✓ State change from {transmitter.hex()}")
                     print(f"  Info Type: 0x{info_type:02X}, Data: {info_data.hex()}")
                 else:

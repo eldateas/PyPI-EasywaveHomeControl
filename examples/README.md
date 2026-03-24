@@ -41,7 +41,7 @@ async def ew_send_receive_rx11() -> None:
     # Step 1: Discover gateways
     for i in range(10):
         result, gateway = await device.ew_get_fd_serial_request(index=i)
-        if result == RX11Device.ErrorCode.SUCCESS:
+        if result == RX11ErrorCode.SUCCESS:
             print(f"Gateway: {gateway.hex()}")
     
     # Step 2: Send command to gateway
@@ -205,9 +205,9 @@ result, count = await device.query_positions()
 
 ```python
 # Check results with device-specific ErrorCode enums
-if result == RX11Device.ErrorCode.SUCCESS:
+if result == RX11ErrorCode.SUCCESS:
     print("Success!")
-elif result == RX11Device.ErrorCode.ERR_RF_TIMEOUT:
+elif result == RX11ErrorCode.ERR_RF_TIMEOUT:
     print("RF timeout")
 else:
     print(f"Error: 0x{result:02x}")
@@ -265,7 +265,7 @@ async def listen_loop():
             result, info_type, transmitter, info_data = await device.ew_rcv_button_request(
                 timeout=None  # Indefinite wait in background
             )
-            if result == RX11Device.ErrorCode.SUCCESS:
+            if result == RX11ErrorCode.SUCCESS:
                 print(f"Button pressed on {transmitter.hex()}")
         except asyncio.CancelledError:
             break
@@ -528,7 +528,7 @@ All async methods support timeout handling:
 ```python
 try:
     result, data = await device.query_hw_version(timeout=5.0)
-    if result == ErrorCode.SUCCESS:
+    if result == RX11ErrorCode.SUCCESS:
         print(f"Hardware: {data.hex()}")
 except asyncio.TimeoutError:
     print("Timeout waiting for device")
@@ -611,7 +611,7 @@ Use for: Home Assistant integrations, long-running services
 ```python
 while True:
     result, ... = await device.ewb_rcv_request(timeout=None)
-    if result == ErrorCode.SUCCESS:
+    if result == RX11ErrorCode.SUCCESS:
         # Process telegram
         pass
 ```
@@ -742,31 +742,4 @@ RX09 Family (57600 baud):
   RX09, RX09-BASIC
 ```
 
-## Legacy: basic_example.py (Deprecated - Old Sync API)
 
-For async applications, you can use the threading model and integrate with asyncio:
-
-```python
-import asyncio
-from easywave_home_control import RxModule
-
-async def main():
-    rx = RxModule(port="/dev/ttyACM0")
-    
-    if not rx.connect():
-        print("Connection failed")
-        return
-    
-    # Run query in executor to avoid blocking
-    loop = asyncio.get_event_loop()
-    result, hw_ver = await loop.run_in_executor(
-        None, 
-        lambda: rx.query_hw_version(timeout=5.0)
-    )
-    
-    print(f"Hardware: {hw_ver.hex()}")
-    
-    rx.dispose()
-
-asyncio.run(main())
-```

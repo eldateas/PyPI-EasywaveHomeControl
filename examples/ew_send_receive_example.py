@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from easywave_home_control import RX09Device, RX11Device
+from easywave_home_control import RX09Device, RX09ErrorCode, RX11Device, RX11ErrorCode
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,7 +50,7 @@ async def ew_send_receive_rx11() -> None:
             result, gateway = await device.ew_get_fd_serial_request(  # type: ignore[attr-defined]
                 index=i, timeout=2.0
             )
-            if result == RX11Device.ErrorCode.SUCCESS and gateway != b"\x00" * 16:
+            if result == RX11ErrorCode.SUCCESS and gateway != b"\x00" * 16:
                 gateways.append(gateway)
                 print(f"   Found gateway {i + 1}: {gateway.hex()}")
             else:
@@ -70,7 +70,7 @@ async def ew_send_receive_rx11() -> None:
         result = await device.ew_send_cmd_request(  # type: ignore[attr-defined]
             gateway=target_gateway, button=button, timeout=5.0
         )
-        if result == RX11Device.ErrorCode.SUCCESS:
+        if result == RX11ErrorCode.SUCCESS:
             print(f"✓ Command sent successfully (Button {chr(65 + button)})\n")
         else:
             print(f"⚠️  Send failed: error {result}\n")
@@ -82,7 +82,7 @@ async def ew_send_receive_rx11() -> None:
                 timeout=30.0
             )
 
-            if result == RX11Device.ErrorCode.SUCCESS:
+            if result == RX11ErrorCode.SUCCESS:
                 print("✓ Button response received!")
                 print(f"  Info Type:      0x{info_type:02X}")
                 print(f"  Transmitter:    {transmitter.hex()}")
@@ -131,7 +131,7 @@ async def ew_send_receive_rx09() -> None:
                 timeout=30.0
             )
 
-            if result == RX09Device.ErrorCode.SUCCESS:
+            if result == RX09ErrorCode.SUCCESS:
                 print("✓ Button received!")
                 print(f"  Info Type:      0x{info_type:02X}")
                 print(f"  Transmitter:    {transmitter.hex()}")  # type: ignore[attr-defined]

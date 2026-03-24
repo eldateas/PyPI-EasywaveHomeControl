@@ -24,31 +24,31 @@ pip install easywave-home-control
 
 ### Creating Devices
 
-All devices use the unified `.create()` factory method:
+The easiest way is the `AsyncDeviceFactory` — or use the device class directly for full type safety:
 
 ```python
 import asyncio
-from easywave_home_control import RX11Device, RX09Device
+from easywave_home_control import AsyncDeviceFactory, RX11Device
 
 async def main():
-    # Create and automatically connect to device
-    device = await RX11Device.create(
-        port="/dev/ttyUSB0",
-        timeout=5.0
-    )
-    
+    # Option A: Factory (string-based, flexible)
+    device = await AsyncDeviceFactory.create("RX11", port="/dev/ttyUSB0", timeout=5.0)
+
+    # Option B: Device class directly (type-safe, recommended for typed code)
+    # device = await RX11Device.create(port="/dev/ttyUSB0", timeout=5.0)
+
     try:
         # Device is now connected and ready to use
         info = await device.get_device_info()
         print(f"Device: {info}")
-        
+
         # Check connectivity
         connected = await device.ping_request(timeout=3.0)
         print(f"Connected: {connected}")
-        
+
         # Use device-specific methods
         result, hw_version = await device.query_hw_version()
-        if result == RX11Device.ErrorCode.SUCCESS:
+        if result == RX11ErrorCode.SUCCESS:
             print(f"Hardware Version: {hw_version}")
     finally:
         # Always disconnect when done
@@ -98,7 +98,7 @@ await device.ew_send_cmd_request(gateway=gateway_serial, button=0)
 result, receiver = await device.ewb_join_device_request(transmitter_serial)
 
 # Check error codes
-if result == RX11Device.ErrorCode.SUCCESS:
+if result == RX11ErrorCode.SUCCESS:
     print(f"Success: {info_type}")
 else:
     print(f"Error: {result}")
@@ -117,7 +117,7 @@ result, position_count = await device.query_positions()
 result = await device.send_telegramm(position=0, button_code="A")
 
 # Check error codes
-if result == RX09Device.ErrorCode.SUCCESS:
+if result == RX09ErrorCode.SUCCESS:
     print("Success")
 ```
 
@@ -153,19 +153,19 @@ Each device family has device-specific error code enums:
 
 ```python
 # RxModule devices (RX11, RX21, RX22, RX25)
-from easywave_home_control import RX11Device
+from easywave_home_control import RX11Device, RX11ErrorCode
 
-if result == RX11Device.ErrorCode.SUCCESS:
+if result == RX11ErrorCode.SUCCESS:
     print("Command successful")
-elif result == RX11Device.ErrorCode.ERR_RF_TIMEOUT:
+elif result == RX11ErrorCode.ERR_RF_TIMEOUT:
     print("RF communication timeout")
-elif result == RX11Device.ErrorCode.ERR_FAILSTATE:
+elif result == RX11ErrorCode.ERR_FAILSTATE:
     print("Device in failure state")
 
 # RX09 device
-from easywave_home_control import RX09Device
+from easywave_home_control import RX09Device, RX09ErrorCode
 
-if result == RX09Device.ErrorCode.SUCCESS:
+if result == RX09ErrorCode.SUCCESS:
     print("Command successful")
 ```
 
