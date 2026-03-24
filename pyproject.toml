@@ -11,7 +11,7 @@ license = "Apache-2.0"
 authors = [
     {name = "ELDAT EaS GmbH", email = "info@eldat.de"},
 ]
-keywords = ["easywave", "rx11", "transceiver", "usb", "serial"]
+keywords = ["easywave", "rx11", "rx09", "transceiver", "usb", "serial"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -44,9 +44,9 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/home-assistant/core/tree/dev/homeassistant/components/easywave"
-Documentation = "https://www.home-assistant.io/integrations/easywave"
-Issues = "https://github.com/home-assistant/core/issues"
+Repository = "https://github.com/eldateas/PyPI-EasywaveHomeControl"
+Documentation = "https://github.com/eldateas/PyPI-EasywaveHomeControl/blob/main/README.md"
+Issues = "https://github.com/eldateas/PyPI-EasywaveHomeControl/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
