@@ -1,324 +1,260 @@
 #!/usr/bin/env python3
-"""Example: Home Assistant Integration with RX11 and RX09.
+"""Example: Home Assistant integration pattern with the EWB codec layer.
 
-Demonstrates how to integrate the Easywave RX11/RX09 receivers into
-Home Assistant as a long-running service.
-
-Features:
-- Automatic device discovery on startup
-- Continuous background listening for button presses
-- Event integration with Home Assistant event bus
-- Graceful shutdown handling
-- Error recovery and reconnection
-
-This example shows the pattern for creating a Home Assistant
-custom component using the easywave-home-control library.
+Demonstrates how a HA DataUpdateCoordinator would use this library:
+- Persist known neo receivers in config (simulated here)
+- Restore state on startup via ewb_query_state_request + parse_ewb_state
+- Background EWB_RCV loop with parse_ewb_rcv
+- Entity actions via encode_ewb_state + ewb_change_state_request
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional
 
-from easywave_home_control import RX09Device, RX11Device
+from easywave_home_control import (
+    RX11Device,
+    RX11ErrorCode,
+    encode_ewb_state,
+    parse_ewb_rcv,
+    parse_ewb_state,
+)
+from easywave_home_control.codec import (
+    StateDirection,
+    SwitchChangeCommand,
+    SwitchDesiredAction,
+)
+from easywave_home_control.codec.events import ButtonPushEvent, EwbRcvEvent, EwbStateChangeEvent
+from easywave_home_control.protocols.rx11_rx2x.protocol import DeviceType, InfoType
 
 _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class ButtonEvent:
-    """Represents a button press event."""
+class EwbDeviceConfig:
+    """Serializable device entry (maps to HA config_entry / Store)."""
 
-    transmitter: bytes
-    button: int
-    info_type: int
-    info_data: bytes
-    timestamp: float
+    name: str
+    gateway_serial: str
+    receiver_serial: str
+    device_type: int
 
 
-class RxModuleHA:
-    """Home Assistant integration for Easywave RX modules.
+@dataclass
+class EwbDeviceRuntime:
+    """In-memory device state managed by the coordinator."""
 
-    Handles:
-    - Device lifecycle (connect/disconnect)
-    - Background listening for button presses
-    - Event callbacks to Home Assistant
-    - Error handling and recovery
-    """
+    config: EwbDeviceConfig
+    last_mode: int = 0
+    last_state_hex: str = "00000000"
+    parsed_state: Any = None
+    available: bool = True
 
-    def __init__(
-        self,
-        device_class: Union[type[RX11Device], type[RX09Device]],
-        port: str,
-        event_callback: Optional[Callable[[ButtonEvent], None]] = None,
-    ):
-        """Initialize RX module HA integration.
 
-        Args:
-            device_class: Device class to use (RX11Device, RX09Device, etc.)
-            port: Serial port (e.g., "/dev/ttyUSB0" or "COM3")
-            event_callback: Optional callback for button events
-        """
-        self.device_class = device_class
-        self.port = port
-        self.event_callback = event_callback
-        self.device: Optional[Union[RX11Device, RX09Device]] = None
-        self._listening = False
-        self._listen_task: Optional[asyncio.Task[None]] = None
+@dataclass
+class EasywaveCoordinator:
+    """Minimal coordinator showing HA integration patterns with the codec."""
 
-    async def connect(self) -> bool:
-        """Connect to RX module.
+    port: str
+    devices: list[EwbDeviceConfig]
+    device: Optional[RX11Device] = None
+    runtime: dict[str, EwbDeviceRuntime] = field(default_factory=dict)
+    event_callback: Optional[Callable[[EwbRcvEvent, EwbDeviceRuntime | None], None]] = None
+    _listening: bool = False
+    _listen_task: Optional[asyncio.Task[None]] = None
 
-        Returns:
-            True if connection successful, False otherwise
-        """
+    def __post_init__(self) -> None:
+        for entry in self.devices:
+            self.runtime[entry.receiver_serial] = EwbDeviceRuntime(config=entry)
+
+    async def async_setup(self) -> bool:
         try:
-            _LOGGER.info("Connecting to %s on port %s...", self.device_class.__name__, self.port)
-            self.device = await self.device_class.create(port=self.port, timeout=10.0)
-            _LOGGER.info("Successfully connected to %s", self.device_class.__name__)
+            self.device = await RX11Device.create(port=self.port, timeout=10.0)
+            await self.async_restore_states()
             return True
-        except Exception as e:
-            _LOGGER.error("Failed to connect to %s: %s", self.device_class.__name__, e)
-            self.device = None
+        except Exception as exc:
+            _LOGGER.error("Setup failed: %s", exc)
             return False
 
-    async def disconnect(self) -> None:
-        """Disconnect from RX module."""
-        # Stop listening first
-        await self.stop_listening()
+    async def async_restore_states(self) -> None:
+        """Query all known devices after HA restart (coordinator _async_update_data pattern)."""
+        if not self.device:
+            return
 
-        # Then disconnect device
-        if self.device:
-            try:
-                await self.device.disconnect()
-                _LOGGER.info("Disconnected from %s", self.device_class.__name__)
-            except Exception as e:
-                _LOGGER.error("Error disconnecting: %s", e)
-            finally:
-                self.device = None
+        for entry in self.devices:
+            runtime = self.runtime[entry.receiver_serial]
+            gateway = bytes.fromhex(entry.gateway_serial)
+            receiver = bytes.fromhex(entry.receiver_serial)
+
+            result, mode, raw = await self.device.ewb_query_state_request(  # type: ignore[attr-defined]
+                gateway=gateway,
+                receiver=receiver,
+                desired_mode=0,
+                timeout=5.0,
+            )
+
+            if result == RX11ErrorCode.SUCCESS:
+                runtime.last_mode = mode
+                runtime.last_state_hex = raw.hex()
+                runtime.parsed_state = parse_ewb_state(entry.device_type, mode, raw)
+                runtime.available = True
+                _LOGGER.info("Restored %s: %s", entry.name, runtime.parsed_state)
+            else:
+                runtime.available = False
+                if runtime.last_state_hex != "00000000":
+                    raw = bytes.fromhex(runtime.last_state_hex)
+                    runtime.parsed_state = parse_ewb_state(
+                        entry.device_type, runtime.last_mode, raw
+                    )
+                _LOGGER.warning("Restore failed for %s, keeping cached state", entry.name)
+
+    async def async_turn_on(self, receiver_serial: str) -> None:
+        """Entity turn_on → encode + ewb_change_state_request."""
+        if not self.device:
+            return
+
+        runtime = self.runtime[receiver_serial]
+        entry = runtime.config
+        if entry.device_type != DeviceType.EWB_DT_SWITCH:
+            _LOGGER.warning("turn_on demo only implemented for switches")
+            return
+
+        raw = encode_ewb_state(
+            entry.device_type,
+            0,
+            SwitchChangeCommand(action=SwitchDesiredAction.ON),
+            direction=StateDirection.TO_DEVICE,
+        )
+
+        result, mode, response = await self.device.ewb_change_state_request(  # type: ignore[attr-defined]
+            gateway=bytes.fromhex(entry.gateway_serial),
+            receiver=bytes.fromhex(entry.receiver_serial),
+            desired_mode=0,
+            desired_state=raw,
+            timeout=5.0,
+        )
+
+        if result == RX11ErrorCode.SUCCESS:
+            runtime.last_mode = mode
+            runtime.last_state_hex = response.hex()
+            runtime.parsed_state = parse_ewb_state(entry.device_type, mode, response)
+            runtime.available = True
 
     async def start_listening(self) -> None:
-        """Start background listening for button presses.
-
-        The listening task will:
-        - Listen indefinitely for button presses
-        - Call event_callback for each press
-        - Handle disconnections and reconnect
-        - Continue until stop_listening() is called
-        """
-        if self._listening:
-            _LOGGER.warning("Already listening")
+        if self._listening or not self.device:
             return
-
-        if not self.device:
-            _LOGGER.error("Not connected")
-            return
-
-        _LOGGER.info("Starting button listener for %s", self.device_class.__name__)
         self._listening = True
         self._listen_task = asyncio.create_task(self._listen_loop())
 
     async def stop_listening(self) -> None:
-        """Stop background listening."""
-        if not self._listening:
-            return
-
-        _LOGGER.info("Stopping listener")
         self._listening = False
-
         if self._listen_task:
             self._listen_task.cancel()
             try:
                 await self._listen_task
             except asyncio.CancelledError:
                 pass
-            finally:
-                self._listen_task = None
+            self._listen_task = None
+
+    async def async_shutdown(self) -> None:
+        await self.stop_listening()
+        if self.device:
+            await self.device.disconnect()
+            self.device = None
 
     async def _listen_loop(self) -> None:
-        """Internal listening loop (runs in background)."""
-        if not self.device or not self._listening:
-            return
+        assert self.device is not None
+        receiver_lookup = {
+            bytes.fromhex(entry.receiver_serial): self.runtime[entry.receiver_serial]
+            for entry in self.devices
+        }
 
-        while self._listening and self.device:
+        while self._listening:
             try:
-                # Listen for button presses with no timeout
-                result, info_type, transmitter, info_data = (  # type: ignore[misc]
-                    await self.device.ew_rcv_button_request(timeout=None)  # type: ignore[attr-defined]
-                )
+                result, info_type, serial, info_data = await self.device.ewb_rcv_request(timeout=None)  # type: ignore[attr-defined]
+                if result != RX11ErrorCode.SUCCESS:
+                    continue
 
-                if result == self.device.ErrorCode.SUCCESS and self._listening:  # type: ignore[attr-defined]
-                    # Fire event callback
-                    event = ButtonEvent(
-                        transmitter=transmitter,  # type: ignore[arg-type]
-                        button=info_type,  # type: ignore[arg-type]
-                        info_type=info_type,  # type: ignore[arg-type]
-                        info_data=info_data,  # type: ignore[arg-type]
-                        timestamp=asyncio.get_event_loop().time(),
-                    )
-                    if self.event_callback:
-                        self.event_callback(event)
+                runtime = receiver_lookup.get(serial)
+                device_type = runtime.config.device_type if runtime else None
+                if info_type == InfoType.TM_IT_EWBIDI_STATE and device_type is None:
+                    device_type = DeviceType.EWB_DT_SWITCH
+
+                event = parse_ewb_rcv(info_type, serial, info_data, device_type=device_type)
+
+                if isinstance(event, EwbStateChangeEvent) and runtime:
+                    runtime.last_mode = event.mode
+                    runtime.last_state_hex = info_data[1:5].hex()
+                    runtime.parsed_state = event.state
+                    runtime.available = True
+
+                if self.event_callback:
+                    self.event_callback(event, runtime)
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                _LOGGER.error("Error in listen loop: %s", e)
-                if self._listening:
-                    # Wait before retry
-                    await asyncio.sleep(5)
+            except Exception as exc:
+                _LOGGER.error("Listen loop error: %s", exc)
+                await asyncio.sleep(5)
 
 
-class HasButtonEntity:
-    """Simplified Home Assistant button entity.
+def _on_coordinator_event(event: EwbRcvEvent, runtime: EwbDeviceRuntime | None) -> None:
+    if isinstance(event, ButtonPushEvent):
+        _LOGGER.info("Button %s from %s", event.button.name, event.transmitter_serial.hex())
+        return
 
-    A real implementation would extend hass.helpers.entity.Entity
-    """
+    if isinstance(event, EwbStateChangeEvent):
+        name = runtime.config.name if runtime else event.receiver_serial.hex()
+        _LOGGER.info("State update for %s: %s", name, event.state)
+        return
 
-    def __init__(self, unique_id: str, name: str):
-        """Initialize button entity."""
-        self.unique_id = unique_id
-        self.name = name
-        self.last_updated: Optional[float] = None
-
-    async def async_handle_event(self, event: ButtonEvent) -> None:
-        """Handle button event from RX module."""
-        self.last_updated = event.timestamp
-        _LOGGER.info(
-            "Button event on %s: transmitter=%s, data=%s",
-            self.name,
-            event.transmitter.hex(),
-            event.info_data.hex(),
-        )
+    _LOGGER.info("EWB event: %s", type(event).__name__)
 
 
-# Example Home Assistant setup functions
-
-
-async def setup_rx11_integration(hass_config: dict[str, Any]) -> Optional[RxModuleHA]:
-    """Set up RX11 integration.
-
-    Args:
-        hass_config: Home Assistant configuration dict with:
-            - "port": Serial port for RX11
-
-    Returns:
-        RxModuleHA instance if successful, None otherwise
-    """
-    _LOGGER.info("Setting up RX11 Easywave integration")
-
-    port = hass_config.get("port", "/dev/ttyUSB0")
-
-    # Create integration
-    rx11_integration = RxModuleHA(
-        device_class=RX11Device,
-        port=port,
-        event_callback=_on_button_event,
-    )
-
-    # Connect
-    if not await rx11_integration.connect():
-        return None
-
-    # Start listening
-    await rx11_integration.start_listening()
-
-    _LOGGER.info("RX11 integration setup complete")
-    return rx11_integration
-
-
-async def setup_rx09_integration(hass_config: dict[str, Any]) -> Optional[RxModuleHA]:
-    """Set up RX09 integration.
-
-    Args:
-        hass_config: Home Assistant configuration dict with:
-            - "port": Serial port for RX09
-
-    Returns:
-        RxModuleHA instance if successful, None otherwise
-    """
-    _LOGGER.info("Setting up RX09 Easywave integration")
-
-    port = hass_config.get("port", "/dev/ttyUSB1")
-
-    # Create integration
-    rx09_integration = RxModuleHA(
-        device_class=RX09Device,
-        port=port,
-        event_callback=_on_button_event,
-    )
-
-    # Connect
-    if not await rx09_integration.connect():
-        return None
-
-    # Start listening (RX09 has limited button detection)
-    await rx09_integration.start_listening()
-
-    _LOGGER.info("RX09 integration setup complete")
-    return rx09_integration
-
-
-def _on_button_event(event: ButtonEvent) -> None:
-    """Callback for button events.
-
-    In real HA integration, this would:
-    - Fire hass.bus.async_fire("easywave.button_pressed", {...})
-    - Update entity state
-    - Trigger automations
-    """
-    _LOGGER.info(
-        "Button pressed: %s (data: %s)",
-        event.transmitter.hex(),
-        event.info_data.hex(),
-    )
-
-
-async def example_single_device():
-    """Example: Single RX11 device with event handler."""
+async def example_coordinator_lifecycle() -> None:
+    """Simulates HA setup → restore → listen → entity action → shutdown."""
     print("\n" + "=" * 80)
-    print("Home Assistant Example: Single RX11 Device")
+    print("Home Assistant Pattern: EasywaveCoordinator + Codec")
     print("=" * 80 + "\n")
 
-    config = {"port": "/dev/ttyUSB0"}
-    rx11: Optional[RxModuleHA] = await setup_rx11_integration(config)
+    # Simulated config_entry.data — in HA this comes from persistent storage
+    config = [
+        EwbDeviceConfig(
+            name="Living Room Switch",
+            gateway_serial="0123456789abcdef0123456789abcdef",
+            receiver_serial="fedcba9876543210fedcba9876543210",
+            device_type=int(DeviceType.EWB_DT_SWITCH),
+        ),
+    ]
 
-    if rx11:
-        try:
-            print("✓ RX11 listening for button presses (30 seconds)...\n")
-            await asyncio.sleep(30)
-        except KeyboardInterrupt:
-            print("\n\nInterrupted")
-        finally:
-            await rx11.disconnect()
+    coordinator = EasywaveCoordinator(
+        port="/dev/ttyUSB0",
+        devices=config,
+        event_callback=_on_coordinator_event,
+    )
 
+    if not await coordinator.async_setup():
+        print("Could not connect to RX11 (expected without hardware)")
+        print("\nCoordinator pattern code is ready for HA — replace serials with real values.")
+        return
 
-async def example_multiple_devices():
-    """Example: Multiple RX modules (RX11 + RX09)."""
-    print("\n" + "=" * 80)
-    print("Home Assistant Example: Multiple RX Modules")
-    print("=" * 80 + "\n")
+    await coordinator.start_listening()
+    print("Coordinator listening (30 seconds)...")
+    print("Toggle a neo device or press a transmitter button.\n")
 
-    rx11_config = {"port": "/dev/ttyUSB0"}
-    rx09_config = {"port": "/dev/ttyUSB1"}
-
-    rx11: Optional[RxModuleHA] = await setup_rx11_integration(rx11_config)
-    rx09: Optional[RxModuleHA] = await setup_rx09_integration(rx09_config)
-
-    if rx11 or rx09:
-        try:
-            print("✓ Listeners active for both devices (30 seconds)...\n")
-            await asyncio.sleep(30)
-        except KeyboardInterrupt:
-            print("\n\nInterrupted")
-        finally:
-            if rx11:
-                await rx11.disconnect()
-            if rx09:
-                await rx09.disconnect()
+    try:
+        await asyncio.sleep(5)
+        await coordinator.async_turn_on(config[0].receiver_serial)
+        await asyncio.sleep(25)
+    finally:
+        await coordinator.async_shutdown()
+        print("Coordinator shut down")
 
 
-async def main():
-    """Main entry point."""
+async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -326,26 +262,19 @@ async def main():
 
     print("""
 ╔════════════════════════════════════════════════════════════════════════════╗
-║      HOME ASSISTANT INTEGRATION EXAMPLES (RX11 & RX09)                    ║
+║      HOME ASSISTANT + CODEC EXAMPLE                                        ║
 ║                                                                            ║
-║ Demonstrates how to integrate Easywave receivers as services:             ║
-║ - Single device integration                                                ║
-║ - Multiple device setup                                                    ║
-║ - Background listening with callbacks                                      ║
-║ - Graceful shutdown                                                        ║
-║ - Error handling and recovery                                              ║
+║ - Restore: parse_ewb_state after ewb_query_state_request                   ║
+║ - Listen:  parse_ewb_rcv in EWB_RCV loop                                   ║
+║ - Control: encode_ewb_state before ewb_change_state_request                ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 """)
 
-    # Run single device example
-    await example_single_device()
-
-    # Uncomment to run multiple devices example
-    # await example_multiple_devices()
+    await example_coordinator_lifecycle()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n\nProgram interrupted.\n")
+        print("\nProgram interrupted.\n")

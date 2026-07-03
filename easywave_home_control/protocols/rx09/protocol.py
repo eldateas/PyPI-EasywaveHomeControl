@@ -25,6 +25,17 @@ from enum import IntEnum
 from typing import Any
 
 from ...protocols.base import BaseProtocol
+from .parsing import (
+    parse_bootloader_response,
+    parse_button_response,
+    parse_echo_response,
+    parse_getp_response,
+    parse_id_response,
+    parse_led_response,
+    parse_rdp_response,
+    parse_rec_message,
+    parse_status_response,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -180,6 +191,7 @@ class RX09Protocol(BaseProtocol):
             "query_led": "Query LED status",
             "set_led": "Control red LED",
             "query_button": "Query button status (pressed/released)",
+            "start_bootloader": "Start device bootloader",
         }
 
     async def ping_request(self, timeout: float = 5.0) -> bool:
@@ -208,12 +220,9 @@ class RX09Protocol(BaseProtocol):
             0 (SUCCESS) on success, non-zero error code otherwise
         """
         response = await self._send_and_receive("ID?", timeout=timeout)
-        if response and response != "ERROR":
-            # Parse: ID,VendorID,DeviceID,Version
-            parts = response.split(",")
-            if len(parts) >= 4:
-                return 0  # SUCCESS
-        return 1  # ERROR
+        if parse_id_response(response or "") is not None:
+            return 0
+        return 1
 
     async def get_device_id(
         self, timeout: float = 5.0
@@ -227,23 +236,15 @@ class RX09Protocol(BaseProtocol):
             (result, vendor_id, device_id, version) or (ERROR, None, None, None)
         """
         response = await self._send_and_receive("ID?", timeout=timeout)
-        if not response or response == "ERROR":
+        parsed = parse_id_response(response or "")
+        if parsed is None:
             return 1, None, None, None
 
-        try:
-            parts = response.split(",")
-            if len(parts) >= 4:
-                vendor_id = int(parts[1], 16)
-                device_id = int(parts[2], 16)
-                device_version = int(parts[3], 16)
-                self._device_id = device_id
-                self._vendor_id = vendor_id
-                self._device_version = device_version
-                return 0, vendor_id, device_id, device_version
-        except (ValueError, IndexError) as e:
-            _LOGGER.error("RX09: Failed to parse device ID: %s", e)
-
-        return 1, None, None, None
+        vendor_id, device_id, device_version = parsed
+        self._device_id = device_id
+        self._vendor_id = vendor_id
+        self._device_version = device_version
+        return 0, vendor_id, device_id, device_version
 
     async def query_positions(self, timeout: float = 5.0) -> tuple[int, int | None]:
         """Query number of transmitter positions (channels).
@@ -255,19 +256,12 @@ class RX09Protocol(BaseProtocol):
             (result, num_positions) or (ERROR, None)
         """
         response = await self._send_and_receive("GETP?", timeout=timeout)
-        if not response or response == "ERROR":
+        num_positions = parse_getp_response(response or "")
+        if num_positions is None:
             return 1, None
 
-        try:
-            parts = response.split(",")
-            if len(parts) >= 2:
-                num_positions = int(parts[1], 16)
-                self._device_num_positions = num_positions
-                return 0, num_positions
-        except (ValueError, IndexError) as e:
-            _LOGGER.error("RX09: Failed to parse positions: %s", e)
-
-        return 1, None
+        self._device_num_positions = num_positions
+        return 0, num_positions
 
     async def read_position_data(
         self, position: int, timeout: float = 5.0
@@ -283,18 +277,10 @@ class RX09Protocol(BaseProtocol):
         """
         command = f"RDP?,{position:02x}"
         response = await self._send_and_receive(command, timeout=timeout)
-        if not response or response == "ERROR":
+        serial_number = parse_rdp_response(response or "", expected_position=position)
+        if serial_number is None:
             return 1, None
-
-        try:
-            parts = response.split(",")
-            if len(parts) >= 3:
-                serial_number = int(parts[2], 16)
-                return 0, serial_number
-        except (ValueError, IndexError) as e:
-            _LOGGER.error("RX09: Failed to parse position data: %s", e)
-
-        return 1, None
+        return 0, serial_number
 
     async def send_telegramm(self, position: int, button: str, timeout: float = 5.0) -> int:
         """Send telegramm from position with button code.
@@ -313,7 +299,7 @@ class RX09Protocol(BaseProtocol):
 
         command = f"TXP,{position:02x},{button}"
         response = await self._send_and_receive(command, timeout=timeout)
-        return 0 if response == "OK" else 1
+        return 0 if parse_status_response(response or "") is True else 1
 
     async def receive_telegramm(
         self, timeout: float | None = 30.0
@@ -355,15 +341,10 @@ class RX09Protocol(BaseProtocol):
             (result, is_on) or (ERROR, None)
         """
         response = await self._send_and_receive("ECHO?", timeout=timeout)
-        if not response or response == "ERROR":
+        is_on = parse_echo_response(response or "")
+        if is_on is None:
             return 1, None
-
-        if "ON" in response:
-            return 0, True
-        elif "OFF" in response:
-            return 0, False
-
-        return 1, None
+        return 0, is_on
 
     async def set_echo(self, enabled: bool, timeout: float = 5.0) -> int:
         """Enable/disable ECHO.
@@ -378,7 +359,7 @@ class RX09Protocol(BaseProtocol):
         cmd = "ON" if enabled else "OFF"
         command = f"ECHO,{cmd}"
         response = await self._send_and_receive(command, timeout=timeout)
-        return 0 if response == "OK" else 1
+        return 0 if parse_status_response(response or "") is True else 1
 
     async def query_led(self, timeout: float = 5.0) -> tuple[int, bool | None]:
         """Query LED status.
@@ -390,15 +371,10 @@ class RX09Protocol(BaseProtocol):
             (result, is_on) or (ERROR, None)
         """
         response = await self._send_and_receive("LED?", timeout=timeout)
-        if not response or response == "ERROR":
+        is_on = parse_led_response(response or "")
+        if is_on is None:
             return 1, None
-
-        if "ON" in response:
-            return 0, True
-        elif "OFF" in response:
-            return 0, False
-
-        return 1, None
+        return 0, is_on
 
     async def set_led(self, enabled: bool, timeout: float = 5.0) -> int:
         """Control red LED.
@@ -413,7 +389,7 @@ class RX09Protocol(BaseProtocol):
         cmd = "ON" if enabled else "OFF"
         command = f"LED,{cmd}"
         response = await self._send_and_receive(command, timeout=timeout)
-        return 0 if response == "OK" else 1
+        return 0 if parse_status_response(response or "") is True else 1
 
     async def query_button(self, timeout: float = 5.0) -> tuple[int, bool | None]:
         """Query button status (pressed/released).
@@ -425,15 +401,15 @@ class RX09Protocol(BaseProtocol):
             (result, is_pressed) or (ERROR, None)
         """
         response = await self._send_and_receive("BUTTON?", timeout=timeout)
-        if not response or response == "ERROR":
+        is_pressed = parse_button_response(response or "")
+        if is_pressed is None:
             return 1, None
+        return 0, is_pressed
 
-        if "pressed" in response:
-            return 0, True
-        elif "released" in response:
-            return 0, False
-
-        return 1, None
+    async def start_bootloader(self, timeout: float = 5.0) -> int:
+        """Start the device bootloader (Spec: ``Bootloader`` command)."""
+        response = await self._send_and_receive("Bootloader", timeout=timeout)
+        return 0 if parse_bootloader_response(response or "") else 1
 
     # ================================================================================================
     # CALLBACK SUPPORT FOR SPONTANEOUS RCV MESSAGES
@@ -601,42 +577,27 @@ class RX09Protocol(BaseProtocol):
 
                 # Check if it's a spontaneous RCV message
                 if message.startswith("REC"):
-                    try:
-                        parts = message.split(",")
-                        if len(parts) >= 3:
-                            # REC,SERIAL_NUMBER,BUTTON_CODE
-                            serial_hex = parts[1]
-                            button_code = parts[2].upper()
+                    parsed = parse_rec_message(message)
+                    if parsed is None:
+                        _LOGGER.warning("Invalid REC message: %s", message)
+                        continue
 
-                            # Validate button code
-                            if button_code not in ("A", "B", "C", "D"):
-                                _LOGGER.warning("Invalid button code: %s", button_code)
-                                continue
+                    serial_number, button_code = parsed
+                    serial_hex = message.split(",")[1]
 
-                            # Parse serial number (hex)
-                            try:
-                                serial_number = int(serial_hex, 16)
-                            except ValueError:
-                                _LOGGER.warning("Invalid serial number format: %s", serial_hex)
-                                continue
+                    telegram_data: dict[str, Any] = {
+                        "serial_number": serial_number,
+                        "serial_hex": serial_hex,
+                        "button_code": button_code,
+                    }
 
-                            telegram_data: dict[str, Any] = {
-                                "serial_number": serial_number,
-                                "serial_hex": serial_hex,
-                                "button_code": button_code,
-                            }
+                    _LOGGER.info(
+                        "Received RCV message: serial=%s button=%s",
+                        serial_hex,
+                        button_code,
+                    )
 
-                            _LOGGER.info(
-                                "Received RCV message: serial=%s button=%s",
-                                serial_hex,
-                                button_code,
-                            )
-
-                            # Invoke all registered callbacks
-                            await self._invoke_rcv_callbacks(telegram_data)
-
-                    except Exception as e:
-                        _LOGGER.error("Error processing RCV message '%s': %s", message, e)
+                    await self._invoke_rcv_callbacks(telegram_data)
 
             except asyncio.CancelledError:
                 _LOGGER.debug("Reader loop cancelled")

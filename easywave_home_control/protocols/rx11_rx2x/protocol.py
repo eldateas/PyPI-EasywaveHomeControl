@@ -457,11 +457,11 @@ def parse_icp_data(icp: ICP, function: int) -> dict[str, Any]:
         elif function in (
             FunctionCode.SEC_SEND_CMD_TEL,
             FunctionCode.SEC_SEND_LRN_TEL,
-            FunctionCode.SEC_REPLY_QUERY,
         ):
-            result["sys_state"] = struct.unpack(">H", data[offset : offset + 2])[0]
-            offset += 2
-            result["app_state"] = struct.unpack(">H", data[offset : offset + 2])[0]
+            if len(data) >= offset + 4:
+                result["primary_state"] = struct.unpack(">H", data[offset : offset + 2])[0]
+                offset += 2
+                result["secondary_state"] = struct.unpack(">H", data[offset : offset + 2])[0]
 
         elif function == FunctionCode.MA_QUERY_HW_VER:
             result["hw_version_str"] = data[offset : offset + 16]
@@ -1974,7 +1974,7 @@ class RxModule:
             (result, stor_index, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
         """
         irp = IRP(function=FunctionCode.SEC_RCV, params=b"")
-        req = self._create_request(irp, 1, 16, "SEC_RCV")
+        req = self._create_request(irp, 1, 14, "SEC_RCV")
 
         self._place_request(req)
         await req.wait(timeout)
@@ -1991,33 +1991,42 @@ class RxModule:
         return req.icp.result, 0, 0, 0, 0, 0, 0
 
     async def sec_learn_request(
-        self, stor_index: int, timeout: float = 30.0
-    ) -> tuple[int, int, int, int, int, int]:
+        self, user_data: int, timeout: float = 30.0
+    ) -> tuple[int, int, int, int, int, int, int]:
         """Learn/program Secwave security storage entry.
 
         Args:
-            stor_index: Storage index for the security entry (0-65535)
+            user_data: 32-bit user data stored when a transmitter is learned
             timeout: Request timeout in seconds (default 30s for learning)
 
         Returns:
-            (result, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
+            (result, stor_index, sec_query, sec_cmd, user_data, sec_flags, lrn_tel)
         """
-        params = encode_uint16(stor_index)
+        params = encode_uint32(user_data)
         irp = IRP(function=FunctionCode.SEC_LEARN, params=params)
-        req = self._create_request(irp, 3, 16, "SEC_LEARN")
+        req = self._create_request(irp, 5, 14, "SEC_LEARN")
 
         self._place_request(req)
         await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_LEARN)
+            stor_index = parsed.get("stor_index", 0)
             sec_query = parsed.get("sec_query", 0)
             sec_cmd = parsed.get("sec_cmd", 0)
-            user_data = parsed.get("user_data", 0)
+            learned_user_data = parsed.get("user_data", 0)
             sec_flags = parsed.get("sec_flags", 0)
             lrn_tel = parsed.get("lrn_tel", 0)
-            return req.icp.result, sec_query, sec_cmd, user_data, sec_flags, lrn_tel
-        return req.icp.result, 0, 0, 0, 0, 0
+            return (
+                req.icp.result,
+                stor_index,
+                sec_query,
+                sec_cmd,
+                learned_user_data,
+                sec_flags,
+                lrn_tel,
+            )
+        return req.icp.result, 0, 0, 0, 0, 0, 0
 
     async def sec_stat_request(
         self, stor_index: int, timeout: float = 5.0
@@ -2045,15 +2054,17 @@ class RxModule:
             return req.icp.result, is_used, user_data
         return req.icp.result, False, 0
 
-    async def sec_delete_request(self, stor_index: int, timeout: float = 5.0) -> int:
+    async def sec_delete_request(
+        self, stor_index: int, timeout: float = 5.0
+    ) -> tuple[int, bool, int]:
         """Delete Secwave security storage entry.
 
         Args:
-            stor_index: Storage index to delete (0-65535)
+            stor_index: Storage index to delete (0-127)
             timeout: Request timeout in seconds. Use None for indefinite waiting.
 
         Returns:
-            Error code
+            (result, is_used, user_data) — post-delete slot status from ICP
         """
         params = encode_uint16(stor_index)
         irp = IRP(function=FunctionCode.SEC_DELETE, params=params)
@@ -2062,7 +2073,12 @@ class RxModule:
         self._place_request(req)
         await self._wait_for_request(req, timeout)
 
-        return req.icp.result
+        if req.icp.result == ErrorCode.SUCCESS:
+            parsed = parse_icp_data(req.icp, FunctionCode.SEC_DELETE)
+            is_used = parsed.get("is_used", False)
+            user_data = parsed.get("user_data", 0)
+            return req.icp.result, is_used, user_data
+        return req.icp.result, False, 0
 
     async def sec_delete_all_request(self, timeout: float = 5.0) -> int:
         """Delete all Secwave security storage entries (factory reset).
@@ -2082,30 +2098,26 @@ class RxModule:
         return req.icp.result
 
     async def sec_reply_query_request(
-        self, stor_index: int, timeout: float = 5.0
-    ) -> tuple[int, int, int]:
-        """Query Secwave security reply parameters.
+        self, primary_state: int, secondary_state: int, timeout: float = 5.0
+    ) -> int:
+        """Reply to a bidirectional Secwave query.
 
         Args:
-            stor_index: Storage index (0-65535)
+            primary_state: Secwave primary state word (Spec Table 8)
+            secondary_state: Secwave secondary state word (reserved, should be 0)
             timeout: Request timeout in seconds
 
         Returns:
-            (result, sys_state, app_state)
+            Error code
         """
-        params = encode_uint16(stor_index)
+        params = encode_uint16(primary_state) + encode_uint16(secondary_state)
         irp = IRP(function=FunctionCode.SEC_REPLY_QUERY, params=params)
-        req = self._create_request(irp, 3, 8, "SEC_REPLY_QUERY")
+        req = self._create_request(irp, 5, 3, "SEC_REPLY_QUERY")
 
         self._place_request(req)
         await self._wait_for_request(req, timeout)
 
-        if req.icp.result == ErrorCode.SUCCESS:
-            parsed = parse_icp_data(req.icp, FunctionCode.SEC_REPLY_QUERY)
-            sys_state = parsed.get("sys_state", 0)
-            app_state = parsed.get("app_state", 0)
-            return req.icp.result, sys_state, app_state
-        return req.icp.result, 0, 0
+        return req.icp.result
 
     async def sec_wr_userdata_request(
         self, stor_index: int, user_data: int, timeout: float = 5.0
@@ -2130,47 +2142,55 @@ class RxModule:
         return req.icp.result
 
     async def sec_send_cmd_tel_request(
-        self, stor_index: int, sys_state: int, app_state: int, timeout: float = 5.0
-    ) -> int:
+        self, params: bytes, timeout: float = 5.0
+    ) -> tuple[int, int, int]:
         """Send Secwave command telegram.
 
         Args:
-            stor_index: Storage index (0-65535)
-            sys_state: System state parameter
-            app_state: Application state parameter
+            params: 6-byte IRP payload from ``encode_sec_send_cmd_tel_params``
             timeout: Request timeout in seconds
 
         Returns:
-            Error code
+            (result, primary_state, secondary_state) — reply state words when queried
         """
-        params = encode_uint16(stor_index) + encode_uint16(sys_state) + encode_uint16(app_state)
+        if len(params) != 6:
+            raise ValueError(f"SEC_SEND_CMD_TEL params must be 6 bytes, got {len(params)}")
         irp = IRP(function=FunctionCode.SEC_SEND_CMD_TEL, params=params)
-        req = self._create_request(irp, 7, 3, "SEC_SEND_CMD_TEL")
+        req = self._create_request(irp, 7, 7, "SEC_SEND_CMD_TEL")
 
         self._place_request(req)
         await req.wait(timeout)
 
-        return req.icp.result
+        if req.icp.result == ErrorCode.SUCCESS:
+            parsed = parse_icp_data(req.icp, FunctionCode.SEC_SEND_CMD_TEL)
+            primary_state = parsed.get("primary_state", 0)
+            secondary_state = parsed.get("secondary_state", 0)
+            return req.icp.result, primary_state, secondary_state
+        return req.icp.result, 0, 0
 
     async def sec_send_lrn_tel_request(
-        self, stor_index: int, sys_state: int, app_state: int, timeout: float = 5.0
-    ) -> int:
+        self, params: bytes, timeout: float = 5.0
+    ) -> tuple[int, int, int]:
         """Send Secwave learn/training telegram.
 
         Args:
-            stor_index: Storage index (0-65535)
-            sys_state: System state parameter
-            app_state: Application state parameter
+            params: 6-byte IRP payload from ``encode_sec_send_cmd_tel_params``
             timeout: Request timeout in seconds
 
         Returns:
-            Error code
+            (result, primary_state, secondary_state) — reply state words when queried
         """
-        params = encode_uint16(stor_index) + encode_uint16(sys_state) + encode_uint16(app_state)
+        if len(params) != 6:
+            raise ValueError(f"SEC_SEND_LRN_TEL params must be 6 bytes, got {len(params)}")
         irp = IRP(function=FunctionCode.SEC_SEND_LRN_TEL, params=params)
-        req = self._create_request(irp, 7, 3, "SEC_SEND_LRN_TEL")
+        req = self._create_request(irp, 7, 7, "SEC_SEND_LRN_TEL")
 
         self._place_request(req)
         await req.wait(timeout)
 
-        return req.icp.result
+        if req.icp.result == ErrorCode.SUCCESS:
+            parsed = parse_icp_data(req.icp, FunctionCode.SEC_SEND_LRN_TEL)
+            primary_state = parsed.get("primary_state", 0)
+            secondary_state = parsed.get("secondary_state", 0)
+            return req.icp.result, primary_state, secondary_state
+        return req.icp.result, 0, 0

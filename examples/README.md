@@ -8,9 +8,10 @@ All examples use the **Async API** with the new unified `.create()` factory meth
 
 | Example | Devices | Use Case | Key Features |
 |---------|---------|----------|--------------|
-| **ew_send_receive_example.py** | RX11, RX09 | Send commands to gateways, receive button presses | Gateway discovery, EW_SEND_CMD, EW_RCV, error handling |
-| **ewb_pairing_example.py** | RX11 | Learn new Easywave Bidi devices | Join device, device state query, paired device management |
-| **ha_integration_full_example.py** | RX11, RX09 | Home Assistant integration pattern | Background listening, event callbacks, connection management |
+| **ew_send_receive_example.py** | RX11 | Send commands, decode telegrams with `parse_ewb_rcv` | Gateway discovery, EW_SEND_CMD, EW_RCV_EX, sensor/button decoding |
+| **ewb_pairing_example.py** | RX11 | Learn neo receivers, query/change/listen with codec | Join device, `parse_ewb_state`, `encode_ewb_state`, `parse_ewb_rcv` |
+| **secwave_example.py** | RX11 | Secwave listen, learn, send | `parse_sec_rcv_result`, `encode_sec_send_cmd_tel_params` |
+| **ha_integration_full_example.py** | RX11 | HA coordinator pattern with codec | Restore, EWB_RCV loop, entity turn_on |
 
 ## Running the Examples
 
@@ -25,9 +26,56 @@ cd ..
 pip install -e .
 ```
 
+### Codec layer in examples
+
+All EWB examples use the codec module so consumers do not parse raw state bytes themselves:
+
+```python
+from easywave_home_control import parse_ewb_rcv, parse_ewb_state, encode_ewb_state
+from easywave_home_control.codec import StateDirection, SwitchChangeCommand, SwitchDesiredAction
+
+# After ewb_query_state_request
+state = parse_ewb_state(device_type, mode, raw_bytes)
+
+# Before ewb_change_state_request
+raw = encode_ewb_state(
+    device_type, 0,
+    SwitchChangeCommand(action=SwitchDesiredAction.ON),
+    direction=StateDirection.TO_DEVICE,
+)
+
+# In EWB_RCV listen loop
+event = parse_ewb_rcv(info_type, serial, info_data, device_type=device_type)
+```
+
+See `ha_integration_full_example.py` for an `EasywaveCoordinator` pattern (restore, listen, turn_on).
+
+### secwave_example.py
+
+Secwave transmitter/receiver workflow with the codec layer.
+
+```bash
+python secwave_example.py
+```
+
+```python
+from easywave_home_control import secwave
+
+error_code, telegram = secwave.parse_sec_rcv_result(await device.sec_rcv_request())
+params = secwave.encode_sec_send_cmd_tel_params(
+    secwave.SecSendCmdTelRequest(
+        button_number=0,
+        query=secwave.SecQuery(wants_reply=True, reply_only=False),
+        command=int(secwave.SecwaveCommand.OPEN),
+        flags=secwave.SecTransmitterFlags(mobile=False, low_battery=False),
+    )
+)
+reply = secwave.encode_sec_reply_query_params(secwave.SecwaveReplyState(...))
+```
+
 ### ew_send_receive_example.py
 
-Demonstrates Easywave Basic (EW) send and receive for both RX11 and RX09 devices.
+Demonstrates Easywave Basic (EW) send and receive with codec-decoded telegrams.
 
 ```bash
 python ew_send_receive_example.py
@@ -47,31 +95,20 @@ async def ew_send_receive_rx11() -> None:
     # Step 2: Send command to gateway
     result = await device.ew_send_cmd_request(gateway=gateway, button=0)
     
-    # Step 3: Receive button response
-    result, info_type, transmitter, info_data = await device.ew_rcv_button_request(timeout=30.0)
-```
-
-**For RX09:**
-```python
-async def ew_send_receive_rx09() -> None:
-    device = await RX09Device.create(port="/dev/ttyUSB1")
-    
-    # RX09 only supports receive (no send on ASCII protocol)
-    # But you can listen for spontaneous button presses
-    result, serial_number, button_code = await device.receive_telegramm(timeout=30.0)
+    # Step 3: Receive and decode telegram (EW_RCV_EX supports sensors too)
+    result, info_type, serial, info_data = await device.ew_rcv_ex_request(timeout=30.0)
+    event = parse_ewb_rcv(info_type, serial, info_data)
 ```
 
 **Shows:**
-- Unified `.create()` factory method
-- Device-specific ErrorCode enums
 - Gateway discovery (RX11)
 - Send and receive workflows
-- Error handling with specific error codes
+- Codec decoding with `parse_ewb_rcv` (buttons, sensors)
 - Proper `await device.disconnect()` cleanup
 
 ### ewb_pairing_example.py
 
-Demonstrates Easywave Bidi (EWB) device pairing workflow for RX11.
+Demonstrates Easywave Bidi (EWB) pairing, state query/change, and listening with the codec.
 
 ```bash
 python ewb_pairing_example.py
@@ -87,25 +124,23 @@ result, receiver = await device.ewb_join_device_request(
 )
 
 # Step 2: Query learned device state
-result, mode, state = await device.ewb_query_state_request(device_id=receiver)
+result, mode, raw = await device.ewb_query_state_request(gateway, receiver, desired_mode=0)
+state = parse_ewb_state(device_type, mode, raw)
 
 # Step 3: Change device state
-result = await device.ewb_change_state_request(
-    device_id=receiver,
-    mode=state_mode,
-    state=new_state
-)
+raw = encode_ewb_state(device_type, 0, SwitchChangeCommand(action=SwitchDesiredAction.ON),
+                       direction=StateDirection.TO_DEVICE)
+result, mode, raw = await device.ewb_change_state_request(gateway, receiver, 0, raw)
 ```
 
 **Shows:**
 - Device pairing workflow
-- State queries and changes
-- Device management
-- Error handling
+- Typed state query and change via codec
+- EWB_RCV listener with `parse_ewb_rcv`
 
 ### ha_integration_full_example.py
 
-Real-world Home Assistant integration pattern with background listening.
+Home Assistant coordinator pattern using the codec layer.
 
 ```bash
 python ha_integration_full_example.py
@@ -113,27 +148,18 @@ python ha_integration_full_example.py
 
 **Architecture:**
 ```python
-class RxModuleHA:
-    """Home Assistant integration wrapper."""
-    
-    def __init__(self, device_class, port, event_callback):
-        self.device = await device_class.create(port=port)
-    
-    async def start_listening(self):
-        """Start background listening for button presses."""
-        # Runs listener task in background
-        self._listen_task = asyncio.create_task(self._listen_loop())
-    
-    def register_callback(self, callback):
-        """Register event callback for button presses."""
-        # Callbacks fired when telegrams received
+coordinator = EasywaveCoordinator(port="/dev/ttyUSB0", devices=config)
+await coordinator.async_setup()          # restore via parse_ewb_state
+await coordinator.start_listening()      # EWB_RCV + parse_ewb_rcv
+await coordinator.async_turn_on(serial)  # encode_ewb_state + change_state
+await coordinator.async_shutdown()
 ```
 
 **Shows:**
-- Device lifecycle management (create, connect, disconnect)
-- Background listener task
-- Event callbacks for button presses
-- Connection state tracking
+- Simulated `config_entry.data` for known neo receivers
+- Restore after restart (`ewb_query_state_request` + `parse_ewb_state`)
+- Background EWB_RCV loop with typed events
+- Entity action pattern (`encode_ewb_state` + `ewb_change_state_request`)
 - Error recovery
 - HA-friendly architecture
 
