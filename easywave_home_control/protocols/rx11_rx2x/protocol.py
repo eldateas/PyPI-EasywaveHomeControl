@@ -1386,45 +1386,61 @@ class RxModule:
     # HIGH-LEVEL API FUNCTIONS
     # ================================================================================================
 
-    async def query_hw_version(self, timeout: float = 5.0) -> tuple[int, bytes]:
+    async def query_hw_version(self, timeout: float = 5.0) -> tuple[int, str]:
         """Query hardware version.
 
         Args:
             timeout: Query timeout in seconds. Use None for indefinite waiting.
+
+        Returns:
+            Tuple of (error_code, hw_version_string). The version string is
+            empty on failure.
         """
         irp = IRP(function=FunctionCode.MA_QUERY_HW_VER, params=b"")
         req = self._create_request(irp, 1, 19, "MA_QUERY_HW_VER")
 
         self._place_request(req)
         if not await self._wait_for_request(req, timeout):
-            return ErrorCode.ERR_RF_TIMEOUT, bytes(16)
+            return ErrorCode.ERR_RF_TIMEOUT, ""
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.MA_QUERY_HW_VER)
-            hw_str = parsed.get("hw_version_str", bytes(16))
-            return req.icp.result, hw_str
-        return req.icp.result, bytes(16)
+            hw_raw: bytes = parsed.get("hw_version_str", bytes(16))
+            null_idx = hw_raw.find(0)
+            if null_idx >= 0:
+                hw_raw = hw_raw[:null_idx]
+            return req.icp.result, hw_raw.decode("ascii", errors="ignore").strip()
+        return req.icp.result, ""
 
-    async def query_fw_version(self, timeout: float = 5.0) -> tuple[int, int, int, bool]:
+    async def query_fw_version(self, timeout: float = 5.0) -> tuple[int, str]:
         """Query firmware version.
 
         Args:
             timeout: Query timeout in seconds. Use None for indefinite waiting.
+
+        Returns:
+            Tuple of (error_code, fw_version_string). The version string is
+            formatted as "major.minor" (e.g. "1.4"), with " (incomplete)"
+            appended when the firmware image is marked incomplete. Empty on
+            failure.
         """
         irp = IRP(function=FunctionCode.MA_QUERY_FW_VER, params=b"")
         req = self._create_request(irp, 1, 6, "MA_QUERY_FW_VER")
 
         self._place_request(req)
         if not await self._wait_for_request(req, timeout):
-            return ErrorCode.ERR_RF_TIMEOUT, 0, 0, False
+            return ErrorCode.ERR_RF_TIMEOUT, ""
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.MA_QUERY_FW_VER)
             major = parsed.get("major_version", 0)
             minor = parsed.get("minor_version", 0)
             incomplete = parsed.get("incomplete_fw", False)
-            return req.icp.result, major, minor, incomplete
-        return req.icp.result, 0, 0, False
+            fw_str = f"{major}.{minor}"
+            if incomplete:
+                fw_str += " (incomplete)"
+            return req.icp.result, fw_str
+        return req.icp.result, ""
 
     async def ping(self, timeout: float = 5.0) -> int:
         """Ping the module by sending an intentionally undefined command (0xF0).

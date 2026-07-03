@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-07-03
+
+### Changed
+- `query_hw_version()` now returns `tuple[int, str]` instead of `tuple[int, bytes]`.
+  The null-terminator scan, ASCII decode, and `.strip()` are handled inside the
+  library; callers receive a ready-to-use version string (empty string on failure).
+- `query_fw_version()` now returns `tuple[int, str]` instead of
+  `tuple[int, int, int, bool]`. The version is formatted as `"major.minor"` with
+  `" (incomplete)"` appended when the firmware image is incomplete. Callers no
+  longer need to format the version string themselves.
+
 ## [0.1.1] - 2026-03-24
 
 ### Changed

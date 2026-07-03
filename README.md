@@ -47,7 +47,7 @@ async def main():
         print(f"Connected: {connected}")
 
         # Use device-specific methods
-        result, hw_version = await device.query_hw_version()
+        result, hw_version = await device.query_hw_version()  # hw_version: str
         if result == RX11ErrorCode.SUCCESS:
             print(f"Hardware Version: {hw_version}")
     finally:
@@ -87,8 +87,8 @@ from easywave_home_control import RX11Device, RX21Device, RX22Device, RX25Device
 device = await RX11Device.create(port="/dev/ttyUSB0")
 
 # RxModule-specific methods
-result, hw_version = await device.query_hw_version()
-result, fw_version = await device.query_fw_version()
+result, hw_version = await device.query_hw_version()  # hw_version: str, e.g. "RX11 V1.3"
+result, fw_version = await device.query_fw_version()  # fw_version: str, e.g. "1.4"
 
 # Easywave Basic (EW) functions
 result, info_type, transmitter, info_data = await device.ew_rcv_button_request(timeout=30.0)
