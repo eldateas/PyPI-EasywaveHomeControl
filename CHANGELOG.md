@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-06
+
+### Fixed
+- **EWneo sensor payloads (STH01)** — corrected measurement type mapping (wire type 4 = humidity, 5 = temperature) and value scaling (`/100` centi-units instead of `/10`).
+
+### Added
+- `SensorPayloadFormat` — `NEO` (default) vs. `LEGACY_RX21` (Table 6: type 4 = temperature, 5 = humidity, `/10`).
+- `BatteryLevel`, `wire_measurement_type`, `should_ignore`, reference-value helpers, and learn-capability properties on sensor payloads.
+- Unit tests for STH01 measurement bytes, learn capabilities, legacy format, and edge flags (`tests/codec/test_sensors.py`).
+
 ## [0.1.2] - 2026-07-03
 
 ### Changed

@@ -18,7 +18,14 @@ from .events import (
     UnknownEwbRcvEvent,
 )
 from .exceptions import CodecError, InvalidPayloadError, UnknownModeError
-from .sensors import MeasurementType, SensorLearnPayload, SensorMeasurementPayload, parse_sensor_payload
+from .sensors import (
+    BatteryLevel,
+    MeasurementType,
+    SensorLearnPayload,
+    SensorMeasurementPayload,
+    SensorPayloadFormat,
+    parse_sensor_payload,
+)
 from .states import (
     DimmerLevelCommand,
     DimmerLevelState,
@@ -49,6 +56,7 @@ __all__ = [
     "EwbState",
     "EwbStateChangeEvent",
     "InvalidPayloadError",
+    "BatteryLevel",
     "MeasurementType",
     "MotorActivity",
     "MotorCommand",
@@ -56,6 +64,7 @@ __all__ = [
     "MotorMoveCommand",
     "SensorLearnPayload",
     "SensorMeasurementPayload",
+    "SensorPayloadFormat",
     "SensorTelegramEvent",
     "StateDirection",
     "SwitchChangeCommand",

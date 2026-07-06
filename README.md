@@ -4,6 +4,12 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.2.1
+
+- **Sensor codec fix (STH01)** — correct EWneo type mapping and `/100` scaling for temperature and humidity
+- **Legacy RX21 format** — optional `SensorPayloadFormat.LEGACY_RX21` for Table 6 sensors (`/10`, swapped type codes)
+- **55 unit tests** — including dedicated sensor payload coverage
+
 ## What's New in 0.2.0
 
 - **EWB codec** — parse/encode state for all seven neo device types (switch, dimmer, motor, dual/quad variants)
@@ -72,6 +78,23 @@ raw = encode_ewb_state(
 ```
 
 Supported device types: switch, dual/quad switch, dimmer, motor, dual/quad motor.
+
+### DATA sensors (STH01, EWneo)
+
+```python
+from easywave_home_control.codec import MeasurementType, SensorPayloadFormat, parse_sensor_payload
+
+payload = parse_sensor_payload(info_data)  # default: SensorPayloadFormat.NEO
+if payload.measurement_type == MeasurementType.TEMPERATURE:
+    print(payload.temperature_celsius)
+elif payload.measurement_type == MeasurementType.HUMIDITY:
+    print(payload.humidity_percent)
+
+# Legacy RX21 Table 6 sensors (/10, swapped wire types):
+legacy = parse_sensor_payload(info_data, payload_format=SensorPayloadFormat.LEGACY_RX21)
+```
+
+ST01/ST02, SH01, SL01, and RTS40 use classic button telegrams, not this 8-byte payload.
 
 ### Easywave Basic (EW)
 

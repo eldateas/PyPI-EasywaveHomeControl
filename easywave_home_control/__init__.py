@@ -45,7 +45,7 @@ from .protocols.rx11_rx2x.protocol import ErrorCode as RX11ErrorCode
 from .codec import encode_ewb_state, parse_ewb_rcv, parse_ewb_state
 from .codec import secwave
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     # Factory (primary API)
     "AsyncDeviceFactory",
