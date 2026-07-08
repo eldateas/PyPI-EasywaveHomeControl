@@ -146,7 +146,7 @@ class AsyncDeviceFactory:
         Example:
             ```python
             devices = AsyncDeviceFactory.get_supported_devices()
-            # ['RX11', 'RX11-BASIC', 'RX11-EW', ..., 'RX09', 'RX09-BASIC']
+            # ['RX11', 'RX21', 'RX22', 'RX25', 'RX09']
             ```
         """
         return list(_DEVICE_REGISTRY.keys())

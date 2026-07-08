@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-08
+
+### Added
+- **`RxModuleGateway`** (`EasywaveGateway` alias) — universal gateway for RX11/RX21/RX22/RX25 with connection lifecycle.
+- **`Rx09Gateway`** — ASCII Easywave Basic gateway (prepared; `gateway.ew` only).
+- **`EntityKind`** — explicit device categories (`easywave_transmitter`, `easywave_receiver`, `easywave_neo_*`, `secwave_transmitter`, `secwave_receiver`).
+- **`TransceiverProfile`** registry — protocols, EWB device types, USB IDs; `register_transceiver_profile()` for successors.
+- **`create_gateway()`** factory — picks RxModule vs RX09 gateway from profile.
+- **Protocol facades** — `gateway.ew`, `gateway.ewb`, `gateway.sec` with capability checks.
+
+### Changed
+- **`GatewayConfig.transceiver_id`** replaces the former `device_type` field (no migration shim).
+- **`supports_entity_kind()`** accepts `EntityKind` only — legacy string aliases removed.
+
 ## [0.2.1] - 2026-07-06
 
 ### Fixed

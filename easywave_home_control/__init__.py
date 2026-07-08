@@ -16,7 +16,14 @@ Device Families:
     RX09 (ASCII Protocol):
         - RX09: Basic Receiver (57600 bps, Easywave Basic only)
 
-Quick Start (Home Assistant):
+Quick Start (integration gateway):
+    >>> from easywave_home_control import create_gateway, GatewayConfig
+    >>>
+    >>> gateway = create_gateway("RX11", GatewayConfig(port="/dev/ttyUSB0"))
+    >>> await gateway.start()
+    >>> await gateway.stop()
+
+Quick Start (low-level device):
     >>> from easywave_home_control import AsyncDeviceFactory
     >>>
     >>> device = await AsyncDeviceFactory.create("RX22", port="/dev/ttyAMA0")
@@ -44,11 +51,32 @@ from .protocols.rx11_rx2x import (
 from .protocols.rx11_rx2x.protocol import ErrorCode as RX11ErrorCode
 from .codec import encode_ewb_state, parse_ewb_rcv, parse_ewb_state
 from .codec import secwave
+from .gateway import (
+    EasywaveGateway,
+    GatewayCallbacks,
+    GatewayConfig,
+    GatewayInfo,
+    RxModuleGateway,
+    create_gateway,
+    get_transceiver_profile,
+    GatewayProtocol,
+    EntityKind,
+)
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     # Factory (primary API)
     "AsyncDeviceFactory",
+    # Gateway (integration entry point)
+    "EasywaveGateway",
+    "EntityKind",
+    "GatewayCallbacks",
+    "GatewayConfig",
+    "GatewayInfo",
+    "RxModuleGateway",
+    "create_gateway",
+    "get_transceiver_profile",
+    "GatewayProtocol",
     # Codec layer
     "encode_ewb_state",
     "parse_ewb_rcv",

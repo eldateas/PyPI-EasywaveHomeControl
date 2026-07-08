@@ -4,6 +4,14 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.3.0
+
+- **Gateway layer** — `create_gateway()`, `RxModuleGateway` / `EasywaveGateway`, protocol facades (`ew`, `ewb`, `sec`)
+- **`EntityKind` taxonomy** — explicit integration device categories per transceiver profile
+- **`TransceiverProfile` registry** — capability gating for HA config flows; `register_transceiver_profile()` for successors
+- **`Rx09Gateway`** — prepared ASCII Easywave Basic gateway
+- **69 unit tests**
+
 ## What's New in 0.2.1
 
 - **Sensor codec fix (STH01)** — correct EWneo type mapping and `/100` scaling for temperature and humidity
@@ -22,9 +30,9 @@ Optimized for **Home Assistant integration** with a non-blocking async API and a
 
 - **Pure Async/Await** — no blocking calls on the event loop
 - **Multi-Family Support** — binary protocol (RX11/21/22/25) + ASCII protocol (RX09)
-- **Codec Layer** — typed parse/encode instead of raw byte juggling in integrations
-- **Robust** — error handling, health checks, timeout management
-- **Clean API** — unified `.create()` factory method for all devices
+- **Gateway layer** — connection lifecycle, health, reconnect; recommended integration entry point
+- **Codec layer** — typed parse/encode instead of raw byte juggling
+- **Clean API** — `create_gateway()` for integrations; `AsyncDeviceFactory` / device `.create()` for low-level access
 - **Type Hints** — Pylance strict-mode compliant annotations
 
 ## Installation
@@ -56,7 +64,82 @@ asyncio.run(main())
 
 ## Codec Layer
 
-The library separates **protocol transport** (IRP/ICP over serial) from **codec parsing** (state words, telegrams, sensor payloads). Home Assistant integrations typically keep device mapping and persistence in the integration layer and use the codec for encode/decode.
+The library separates **protocol transport** (IRP/ICP over serial) from **codec parsing** (state words, telegrams, sensor payloads). For integrations, use **`EasywaveGateway`** for connection lifecycle (compare `enocean_async.Gateway`); use the codec for parse/encode.
+
+### Transceiver profiles (HA capability gating)
+
+Each transceiver model has a **profile** declaring supported protocols and EWB device types.
+Home Assistant should read this before offering entity types in config flow:
+
+```python
+from easywave_home_control import get_transceiver_profile, create_gateway, GatewayProtocol, EntityKind
+
+profile = get_transceiver_profile("RX11")
+for kind in profile.supported_entity_kinds():
+    ...  # easywave_transmitter, easywave_receiver, easywave_neo_*, secwave_*
+
+gateway = create_gateway("RX11", GatewayConfig(port="/dev/ttyUSB0"))
+```
+
+Register a **future RX11 successor** without library code changes:
+
+```python
+from easywave_home_control.gateway import (
+    TransceiverFamily,
+    TransceiverProfile,
+    GatewayProtocol,
+    register_transceiver_profile,
+)
+
+register_transceiver_profile(TransceiverProfile(
+    id="RX11_PRO",
+    family=TransceiverFamily.RX_MODULE,
+    protocols=frozenset({GatewayProtocol.EW, GatewayProtocol.EWB}),
+    ewb_device_types=frozenset({...}),
+    usb_ids=frozenset({(0x155A, 0x1015)}),
+    usb_discovery=True,
+))
+```
+
+| Transceiver | Entity kinds |
+|-------------|----------------|
+| RX11 | all six `EntityKind` values |
+| RX21/22/25 | same as RX11 (port required) |
+| RX09 | `easywave_transmitter`, `easywave_receiver` only |
+
+### Gateway (recommended for integrations)
+
+`RxModuleGateway` (alias `EasywaveGateway`) supports **RX11, RX21, RX22, RX25** with protocol facades:
+
+| Facade | Protocol | Examples |
+|--------|----------|----------|
+| `gateway.ew` | Easywave Basic | `send_command`, `receive_ex`, `receive_button`, send loop |
+| `gateway.ewb` | EWneo (EWB) | `join_device`, `change_state`, `query_state`, `receive` |
+| `gateway.sec` | Secwave | `receive`, `learn`, `send_command_telegram`, storage mgmt |
+
+```python
+from easywave_home_control import (
+    EasywaveGateway,
+    GatewayCallbacks,
+    GatewayConfig,
+)
+
+gateway = EasywaveGateway(
+    GatewayConfig(transceiver_id="RX11", port="/dev/ttyUSB0", auto_listen=True),
+    callbacks=GatewayCallbacks(on_telegram=handle_telegram),
+)
+await gateway.start()
+
+await gateway.ew.send_command(gateway_serial, button=0)
+await gateway.ewb.change_state(gw, receiver, device_type, mode, command)
+error, telegram = await gateway.sec.receive()
+
+await gateway.stop()
+```
+
+For UART modules (RX21/22/25), set `transceiver_id` and `port` (USB discovery is RX11-oriented).
+
+Connection lifecycle (health, reconnect, USB swap) lives in the gateway; Home Assistant wires callbacks to entities only.
 
 ### Easywave Bidi (EWB neo)
 
