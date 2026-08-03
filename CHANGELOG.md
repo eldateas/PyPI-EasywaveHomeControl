@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-03
+
+### Fixed
+- **Dual/quad motor summary (mode 0)** — the shared 7-bit channel field carries either a
+  current position (`0–100`) or an activity code (`≥117`). Parsing previously treated every
+  value as `activity`, so idle position reports were lost. `MotorSummaryChannelState` now
+  exposes optional `position`; values `0–100` set `position` and `activity=STOPPED`.
+
+### Changed
+- Encoding `MultiMotorSummaryState` prefers `position` when set (`≤100`), otherwise writes
+  `activity` into the same field.
+
 ## [0.3.0] - 2026-07-08
 
 ### Added

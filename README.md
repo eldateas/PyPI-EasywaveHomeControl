@@ -4,6 +4,12 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.3.1
+
+- **Dual/quad motor summary fix** — mode 0 reports position (`0–100`) in the same field as activity; `MotorSummaryChannelState.position` is now populated correctly
+- Multi-motor summary types exported from `easywave_home_control.codec`
+- **71 unit tests**
+
 ## What's New in 0.3.0
 
 - **Gateway layer** — `create_gateway()`, `RxModuleGateway` / `EasywaveGateway`, protocol facades (`ew`, `ewb`, `sec`)

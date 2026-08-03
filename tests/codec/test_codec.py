@@ -82,6 +82,48 @@ def test_motor_move_command_encode() -> None:
     assert parsed.command == MotorCommand.STOP
 
 
+def test_dual_motor_summary_reports_position() -> None:
+    """Mode 0 FROM_DEVICE uses 0-100 in the activity field as position."""
+    from easywave_home_control.codec.states import MultiMotorSummaryState
+
+    # Channel 1 at protocol position 25, channel 2 opening to position.
+    word = (25 << 25) | (int(MotorActivity.OPENING_TO_POSITION) << 17)
+    raw = encode_state_word(word)
+    state = parse_ewb_state(DeviceType.EWB_DT_DUAL_MOTOR, 0, raw)
+    assert isinstance(state, MultiMotorSummaryState)
+    assert state.channels[0].position == 25
+    assert state.channels[0].activity == MotorActivity.STOPPED
+    assert state.channels[1].position is None
+    assert state.channels[1].activity == MotorActivity.OPENING_TO_POSITION
+
+
+def test_quad_motor_summary_position_roundtrip() -> None:
+    """Quad summary encode/decode preserves per-channel positions."""
+    from easywave_home_control.codec.states import (
+        MotorSummaryChannelState,
+        MultiMotorSummaryState,
+    )
+
+    summary = MultiMotorSummaryState(
+        channels=(
+            MotorSummaryChannelState(1, MotorActivity.STOPPED, False, position=10),
+            MotorSummaryChannelState(2, MotorActivity.STOPPED, False, position=40),
+            MotorSummaryChannelState(3, MotorActivity.OPENING_RUNTIME, False),
+            MotorSummaryChannelState(4, MotorActivity.STOPPED, False, position=100),
+        )
+    )
+    raw = encode_ewb_state(
+        DeviceType.EWB_DT_QUAD_MOTOR, 0, summary, direction=StateDirection.FROM_DEVICE
+    )
+    parsed = parse_ewb_state(DeviceType.EWB_DT_QUAD_MOTOR, 0, raw)
+    assert isinstance(parsed, MultiMotorSummaryState)
+    assert parsed.channels[0].position == 10
+    assert parsed.channels[1].position == 40
+    assert parsed.channels[2].position is None
+    assert parsed.channels[2].activity == MotorActivity.OPENING_RUNTIME
+    assert parsed.channels[3].position == 100
+
+
 def test_timer_duration_minutes() -> None:
     duration = TimerDuration(mantissa=128, exponent=0)
     assert duration.total_minutes == pytest.approx(16.0)

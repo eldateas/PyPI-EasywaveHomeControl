@@ -189,6 +189,8 @@ class MotorSummaryChannelState:
     channel: int
     activity: MotorActivity | int
     slats_tilted: bool
+    # Mode 0 uses the same 7-bit field for position (0-100) or activity (>=117).
+    position: int | None = None
 
 
 @dataclass(frozen=True)

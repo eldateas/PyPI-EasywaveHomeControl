@@ -108,16 +108,29 @@ def _parse_summary(
 ) -> MultiMotorSummaryState:
     channels: list[MotorSummaryChannelState] = []
     for layout in layouts:
-        activity_raw = get_bits(word, layout.activity_high, layout.activity_low)
+        value = get_bits(word, layout.activity_high, layout.activity_low)
+        slats_tilted = bool((word >> layout.slats_bit) & 1)
+        # Same field as TO_DEVICE: 0-100 is current position, >=117 is activity.
+        if value <= 100:
+            channels.append(
+                MotorSummaryChannelState(
+                    channel=layout.index,
+                    activity=MotorActivity.STOPPED,
+                    slats_tilted=slats_tilted,
+                    position=value,
+                )
+            )
+            continue
         try:
-            activity: MotorActivity | int = MotorActivity(activity_raw)
+            activity: MotorActivity | int = MotorActivity(value)
         except ValueError:
-            activity = activity_raw
+            activity = value
         channels.append(
             MotorSummaryChannelState(
                 channel=layout.index,
                 activity=activity,
-                slats_tilted=bool((word >> layout.slats_bit) & 1),
+                slats_tilted=slats_tilted,
+                position=None,
             )
         )
     return MultiMotorSummaryState(channels=tuple(channels))
@@ -215,7 +228,11 @@ def _encode(
             summary_map = {item.channel: item for item in state.channels}
             for layout in layouts:
                 item = summary_map[layout.index]
-                word = set_bits(word, layout.activity_high, layout.activity_low, int(item.activity))
+                if item.position is not None and item.position <= 100:
+                    value = int(item.position)
+                else:
+                    value = int(item.activity)
+                word = set_bits(word, layout.activity_high, layout.activity_low, value)
                 if item.slats_tilted:
                     word = set_bits(word, layout.slats_bit, layout.slats_bit, 1)
             return encode_state_word(word)
