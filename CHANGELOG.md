@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-03
+
+### Changed
+- **Event-loop-safe serial I/O (HA `async-dependency`)** — replaced blocking
+  `pyserial` (`serial.Serial` open/read/write/`in_waiting` on an asyncio Task)
+  with [serialx](https://github.com/puddly/serialx) native async APIs
+  (`async_serial_for_url`). The RX/TX handler awaits `read()`/`write()` and no
+  longer busy-polls the serial port on the Home Assistant event loop.
+- **USB discovery** — uses `serialx` port listing (`async_list_serial_ports` /
+  `list_serial_ports`); brief sync port probes run only in an executor.
+- Dependency: `pyserial` → **`serialx>=1.2.2`**.
+
+### Added
+- `easywave_home_control.serial_io` — shared serialx helpers and exception types.
+- Unit tests proving connect/read/write/close stay non-blocking and never call
+  sync `serial_for_url` on the protocol path (`tests/protocol/test_async_serial_io.py`).
+
 ## [0.3.1] - 2026-08-03
 
 ### Fixed

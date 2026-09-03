@@ -12,12 +12,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import serial
-
 from ..codec import EwbRcvEvent
+from ..serial_io import SERIAL_ERRORS
 from .capabilities import TransceiverProfile
 from .config import GatewayConfig
-from .discovery import SERIAL_OR_OS_ERRORS, find_usb_device, lookup_port_serial
+from .discovery import (
+    SERIAL_OR_OS_ERRORS,
+    async_find_usb_device,
+    async_lookup_port_serial,
+)
 from .profiles import get_transceiver_profile
 
 _LOGGER = logging.getLogger(__name__)
@@ -189,12 +192,9 @@ class BaseTransceiverGateway(ABC):
                     self._enter_disconnected()
                     return False
             elif self._profile.usb_discovery:
-                port_info = await asyncio.get_running_loop().run_in_executor(
-                    None,
-                    lambda: find_usb_device(
-                        self._profile.usb_ids,
-                        baudrate=self._profile.default_baudrate,
-                    ),
+                port_info = await async_find_usb_device(
+                    self._profile.usb_ids,
+                    baudrate=self._profile.default_baudrate,
                 )
                 if port_info is None:
                     if self._reconnect_attempts == 0:
@@ -302,11 +302,7 @@ class BaseTransceiverGateway(ABC):
     async def _refresh_usb_identity(self) -> None:
         if not self._device_path:
             return
-        serial_number = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lookup_port_serial,
-            self._device_path,
-        )
+        serial_number = await async_lookup_port_serial(self._device_path)
         if not serial_number:
             return
         old_serial = self._usb_serial_number
@@ -471,5 +467,5 @@ class BaseTransceiverGateway(ABC):
             _LOGGER.warning("Gateway callback error: %s", err)
 
     async def _close_device_quietly(self) -> None:
-        with contextlib.suppress(serial.SerialException, OSError):
+        with contextlib.suppress(*SERIAL_ERRORS):
             await self._close_device()

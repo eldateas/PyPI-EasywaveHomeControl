@@ -4,6 +4,13 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.4.0
+
+- **HA `async-dependency`** — serial I/O via `serialx` async APIs; no blocking `pyserial` on the event loop
+- RX/TX handler awaits `read()`/`write()` (no `in_waiting` busy-wait)
+- USB discovery uses `serialx` async/sync listing; sync probes only in executors
+- **77 unit tests** including event-loop-safety coverage
+
 ## What's New in 0.3.1
 
 - **Dual/quad motor summary fix** — mode 0 reports position (`0–100`) in the same field as activity; `MotorSummaryChannelState.position` is now populated correctly
@@ -34,7 +41,8 @@ Optimized for **Home Assistant integration** with a non-blocking async API and a
 
 ## Features
 
-- **Pure Async/Await** — no blocking calls on the event loop
+- **Pure Async/Await** — serial I/O via `serialx`; no blocking calls on the event loop
+- **HA-ready** — satisfies Home Assistant `async-dependency` (open/read/write off the blocking path)
 - **Multi-Family Support** — binary protocol (RX11/21/22/25) + ASCII protocol (RX09)
 - **Gateway layer** — connection lifecycle, health, reconnect; recommended integration entry point
 - **Codec layer** — typed parse/encode instead of raw byte juggling
@@ -316,7 +324,7 @@ ASCII protocol at 57600 8N1: comma-separated commands, `\r` terminator, response
 ## Requirements
 
 - Python 3.9+
-- pyserial >= 3.5
+- serialx >= 1.2.2
 
 ## License
 

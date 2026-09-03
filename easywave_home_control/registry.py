@@ -108,7 +108,7 @@ class DeviceFactory:
 
         Raises:
             ValueError: If device_id is not registered
-            serial.SerialException: If port cannot be opened
+            SerialException / OSError: If port cannot be opened
             OSError: If port is invalid
 
         Example:

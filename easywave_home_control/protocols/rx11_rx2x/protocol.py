@@ -9,32 +9,26 @@ callbacks for connection state changes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-import os
 import struct
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
-import serial
-import serial.tools.list_ports
+from ...serial_io import SERIAL_ERRORS, async_serial_for_url
 
 if TYPE_CHECKING:
-    pass
+    from ...serial_io import AsyncSerial
 
 _LOGGER = logging.getLogger(__name__)
 
-try:  # termios is not available on all platforms (e.g., Windows)
-    import termios
-except ImportError:  # pragma: no cover - platform specific
-    termios = None  # type: ignore[assignment]
-
-_SERIAL_ERRORS: tuple[type[Exception], ...] = (serial.SerialException, OSError)
-if termios is not None:
-    _SERIAL_ERRORS = (*_SERIAL_ERRORS, termios.error)  # type: ignore[arg-type]
+# Alias kept for internal use; includes SerialException, OSError, TimeoutError.
+_SERIAL_ERRORS = SERIAL_ERRORS
 
 
 # ====================================================================================================
@@ -506,11 +500,16 @@ class RxModule:
         self.port = port
         self.baudrate = baudrate
 
-        # Serial connection
-        self._serial: serial.Serial | None = None
+        # Serial connection (serialx AsyncSerial — never blocks the event loop)
+        self._serial: AsyncSerial | None = None
         self._connected = False
         self._shutdown_requested = False
         self._is_reconnecting = False
+
+        # Outbound IRP packets drained by ``_serial_handler`` via await write()
+        self._write_queue: deque[bytes] = deque()
+        self._write_wakeup: asyncio.Event | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         # Request queues
         self._tx_req_queued: list[Request | None] = [None] * self.MAX_REQUEST_QUEUED
@@ -550,7 +549,7 @@ class RxModule:
         # Threading & Async
         self._protocol_lock = threading.RLock()
         self._file_lock = threading.Lock()
-        self._serial_handler_ready = threading.Event()  # Signals when handler is actually running
+        self._serial_handler_ready = asyncio.Event()
         self._serial_handler_task: asyncio.Task[None] | None = None  # Set during connect()
 
         # Send command loop (for dead man's switch)
@@ -693,59 +692,47 @@ class RxModule:
     # ================================================================================================
 
     async def connect(self) -> bool:
-        """Connect to the RX11 module."""
+        """Connect to the RX11 module (async serialx — no loop blocking)."""
         try:
             self._shutdown_requested = False
+            self._loop = asyncio.get_running_loop()
+            self._write_queue.clear()
+            self._write_wakeup = asyncio.Event()
 
-            # Open serial connection
-            self._serial = serial.Serial(
-                port=self.port,
+            # Open serial connection asynchronously (serialx)
+            serial_port = async_serial_for_url(
+                self.port,
                 baudrate=self.baudrate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=0.001,
-                write_timeout=1.0,
+                byte_size=8,
+                parity="N",
+                stopbits=1,
+                exclusive=True,
             )
+            await serial_port.open()
+            self._serial = serial_port
 
-            # Start serial handler thread IMMEDIATELY before any communication
-            self._shutdown_requested = False
-            self._serial_handler_ready.clear()  # Reset the event
-            self._serial_handler_task = asyncio.create_task(self._serial_handler())
+            # Drain stale bytes BEFORE starting the RX handler (single reader)
+            drained = await self._drain_input(duration=0.4)
+            if drained > 0:
+                _LOGGER.debug("Drained %d stale bytes from serial buffer", drained)
 
-            # Wait for handler to actually start running (threading.Event, not asyncio)
-            # Give it 1 second to start
-            for _ in range(100):  # 100 * 10ms = 1 second timeout
-                if self._serial_handler_ready.is_set():
-                    break
-                await asyncio.sleep(0.01)
+            # Start serial handler before any protocol communication
+            self._serial_handler_ready = asyncio.Event()
+            self._serial_handler_task = asyncio.create_task(
+                self._serial_handler(),
+                name=f"rxmodule-serial-{self.port}",
+            )
+            try:
+                await asyncio.wait_for(self._serial_handler_ready.wait(), timeout=1.0)
+            except TimeoutError:
+                _LOGGER.error("Serial handler failed to start within 1s")
+                await self.dispose()
+                return False
 
             # Reset state
             self._reset_queues()
             await self.cancel_all_io_requests()
             self._reset_rx_state()
-
-            # Aggressive buffer clearing
-            self._serial.reset_input_buffer()
-            self._serial.reset_output_buffer()
-
-            drain_end = time.time() + 0.4
-            drained = 0
-            while time.time() < drain_end:
-                try:
-                    waiting = self._serial.in_waiting
-                    if waiting > 0:
-                        self._serial.read(waiting)
-                        drained += waiting
-                    else:
-                        await asyncio.sleep(0.02)
-                except _SERIAL_ERRORS:
-                    break
-
-            if drained > 0:
-                _LOGGER.debug("Drained %d stale bytes from serial buffer", drained)
-
-            self._serial.reset_input_buffer()
 
             # Set startup tolerance
             tolerance_duration = (
@@ -766,69 +753,94 @@ class RxModule:
 
             self._connected = True
         except _SERIAL_ERRORS:
+            await self._cleanup_failed_connect()
             return False
         else:
             return True
 
-    async def flush_serial_buffer(self):
-        """Flush serial input buffer and reset RX state.
+    async def _cleanup_failed_connect(self) -> None:
+        """Best-effort cleanup after a failed connect()."""
+        self._shutdown_requested = True
+        if self._write_wakeup is not None:
+            self._write_wakeup.set()
+        if self._serial_handler_task and not self._serial_handler_task.done():
+            self._serial_handler_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait([self._serial_handler_task], timeout=1.0)
+        if self._serial is not None:
+            with contextlib.suppress(*_SERIAL_ERRORS):
+                await self._serial.close()
+            self._serial = None
+        self._serial_handler_task = None
+        self._connected = False
 
-        Call this before sending critical commands (e.g. version queries)
-        to drain any stale data that survived the initial connect drain.
-        Safe to call while the serial handler thread is running.
-        """
+    async def _drain_input(self, *, duration: float) -> int:
+        """Discard inbound bytes for ``duration`` seconds using async reads."""
         if not self._serial or not self._serial.is_open:
-            return
-        try:
-            self._serial.reset_input_buffer()
-            drain_end = time.time() + 0.15
-            drained = 0
-            while time.time() < drain_end:
-                waiting = self._serial.in_waiting
-                if waiting > 0:
-                    self._serial.read(waiting)
-                    drained += waiting
-                else:
-                    await asyncio.sleep(0.01)
-            if drained > 0:
-                _LOGGER.debug("Flushed %d stale bytes from serial buffer", drained)
-        except _SERIAL_ERRORS:
-            pass
+            return 0
+        drained = 0
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                chunk = await asyncio.wait_for(
+                    self._serial.read(256),
+                    timeout=min(0.05, remaining),
+                )
+            except TimeoutError:
+                continue
+            except _SERIAL_ERRORS:
+                break
+            if not chunk:
+                break
+            drained += len(chunk)
+        return drained
 
-    async def dispose(self):
+    async def flush_serial_buffer(self) -> None:
+        """Reset RX parser state.
+
+        Stale-byte draining happens at connect time (before the handler starts).
+        Concurrent ``read()`` against the running handler is not safe with
+        serialx AsyncSerial, so runtime flush only clears framing state.
+        """
+        self._reset_rx_state()
+
+    async def dispose(self) -> None:
         """Disconnect and cleanup."""
         self._shutdown_requested = True
+        if self._write_wakeup is not None:
+            self._write_wakeup.set()
         await self.cancel_all_io_requests()
 
-        # Wait for serial handler thread
+        # Wait for serial handler task
         if self._serial_handler_task and not self._serial_handler_task.done():
             try:
                 await asyncio.wait([self._serial_handler_task], timeout=3.0)
-            except (asyncio.TimeoutError, AttributeError):
+            except (TimeoutError, AttributeError):
                 pass
+            if not self._serial_handler_task.done():
+                self._serial_handler_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._serial_handler_task
 
-        # Drain remaining bytes
+        # Drain remaining bytes then close
         if self._serial and self._serial.is_open:
-            try:
-                self._serial.reset_input_buffer()
-                self._serial.reset_output_buffer()
-                drain_end = time.time() + 0.2
-                while time.time() < drain_end:
-                    if self._serial.in_waiting > 0:
-                        self._serial.read(self._serial.in_waiting)
-                    else:
-                        await asyncio.sleep(0.02)
-            except _SERIAL_ERRORS:
-                pass
+            with contextlib.suppress(*_SERIAL_ERRORS):
+                await self._drain_input(duration=0.2)
 
-        if self._serial:
+        if self._serial is not None:
             try:
-                self._serial.close()
+                await self._serial.close()
             except _SERIAL_ERRORS as e:
                 _LOGGER.debug("Error closing serial connection: %s", e)
             finally:
                 self._serial = None
 
+        self._serial_handler_task = None
+        self._write_queue.clear()
+        self._write_wakeup = None
         self._connected = False
 
     def _reset_queues(self):
@@ -1008,101 +1020,138 @@ class RxModule:
     # SERIAL COMMUNICATION
     # ================================================================================================
 
-    def _write_to_buffer(self, irp: IRP, req_str: str):
-        """Write an IRP to the serial connection."""
-        if not self._serial or self._shutdown_requested:
+    def _write_to_buffer(self, irp: IRP, req_str: str) -> None:
+        """Enqueue an IRP for async write by ``_serial_handler``.
+
+        Never touches the serial port from the caller — writes are drained
+        exclusively via ``await serial.write(...)`` on the event loop.
+        """
+        if self._shutdown_requested:
             return
 
-        try:
-            if not self._is_serial_port_valid():
-                _LOGGER.error("Serial port no longer valid (USB disconnected?)")
-                if self._transition_to_error():
-                    self._notify_disconnect()
-                return
+        packet = encode_irp(irp)
+        with self._file_lock:
+            self._write_queue.append(packet)
+        if self._write_wakeup is not None:
+            self._write_wakeup.set()
 
-            packet = encode_irp(irp)
-
+    async def _flush_writes(self) -> bool:
+        """Drain the outbound write queue. Returns False on I/O failure."""
+        while True:
             with self._file_lock:
-                if self._serial and not self._shutdown_requested:
-                    bytes_written = self._serial.write(packet)
+                if not self._write_queue:
+                    return True
+                packet = self._write_queue.popleft()
 
-                    if bytes_written != len(packet):
-                        _LOGGER.error(
-                            "Serial write incomplete: %d of %d written",
-                            bytes_written,
-                            len(packet),
-                        )
-                        with self._protocol_lock:
-                            self._state_good = False
-                            self._connection_healthy = False
-                        return
-
-        except _SERIAL_ERRORS as e:
-            if not self._shutdown_requested:
-                _LOGGER.error("Serial error during write: %s", e)
-                if self._transition_to_error():
-                    self._notify_disconnect()
-
-    def _is_serial_port_valid(self) -> bool:
-        """Check if the serial port is still valid."""
-        try:
-            if not self._serial or not self._serial.is_open:
+            if not self._serial or self._shutdown_requested:
                 return False
 
-            if hasattr(self._serial, "port") and self._serial.port:
-                port = self._serial.port
-                if os.name == "nt":
-                    available = (p.device for p in serial.tools.list_ports.comports())
-                    if port.upper() not in (p.upper() for p in available):
-                        _LOGGER.warning("Serial port %s no longer exists", port)
-                        return False
-                elif os.path.isabs(port) and not os.path.exists(port):
-                    _LOGGER.warning("Serial port %s no longer exists", port)
-                    return False
-        except (OSError, ValueError) as e:
-            _LOGGER.warning("Error checking serial port validity: %s", e)
-            return False
-        else:
-            return True
-
-    async def _serial_handler(self):
-        """Main serial handler thread."""
-        # Signal that handler is ready
-        self._serial_handler_ready.set()
-
-        while not self._shutdown_requested:
             try:
-                # Check if serial port is still valid
-                if not self._is_serial_port_valid():
-                    if not self._shutdown_requested:
-                        _LOGGER.error("Serial port invalid - USB device may have been removed")
-                        if self._transition_to_error():
-                            self._notify_disconnect()
-                    break
-
-                # Read available bytes
-                try:
-                    while self._serial and self._serial.in_waiting > 0:
-                        byte_data = self._serial.read(1)
-                        if not byte_data:
-                            break
-                        byte = byte_data[0]
-                        self._process_received_byte(byte)
-                except _SERIAL_ERRORS:
-                    if not self._shutdown_requested:
-                        if self._transition_to_error():
-                            self._notify_disconnect()
-                    break
-
-                self._process_queued_requests()
-                await asyncio.sleep(0.01)
-
-            except _SERIAL_ERRORS as e:
-                if not self._shutdown_requested:
-                    _LOGGER.warning("Serial handler error: %s", e)
+                if not self._serial.is_open:
+                    _LOGGER.error("Serial port no longer valid (USB disconnected?)")
                     if self._transition_to_error():
                         self._notify_disconnect()
-                break
+                    return False
+                await self._serial.write(packet)
+            except _SERIAL_ERRORS as e:
+                if not self._shutdown_requested:
+                    _LOGGER.error("Serial error during write: %s", e)
+                    if self._transition_to_error():
+                        self._notify_disconnect()
+                return False
+
+    def _is_serial_port_valid(self) -> bool:
+        """Check if the async serial port is still open."""
+        try:
+            return bool(self._serial and self._serial.is_open)
+        except (OSError, ValueError, AttributeError) as e:
+            _LOGGER.warning("Error checking serial port validity: %s", e)
+            return False
+
+    async def _serial_handler(self) -> None:
+        """Async serial RX/TX loop — no blocking pyserial calls on the loop."""
+        assert self._write_wakeup is not None
+        self._serial_handler_ready.set()
+        read_task: asyncio.Task[bytes] | None = None
+
+        try:
+            while not self._shutdown_requested:
+                if not self._is_serial_port_valid():
+                    if not self._shutdown_requested:
+                        _LOGGER.error(
+                            "Serial port invalid - USB device may have been removed"
+                        )
+                        if self._transition_to_error():
+                            self._notify_disconnect()
+                    break
+
+                # Drain outbound IRPs, then promote queued requests → more writes
+                if not await self._flush_writes():
+                    break
+                self._process_queued_requests()
+                if not await self._flush_writes():
+                    break
+
+                if self._serial is None:
+                    break
+
+                if read_task is None:
+                    read_task = asyncio.create_task(
+                        self._serial.read(256),
+                        name="rxmodule-serial-read",
+                    )
+
+                self._write_wakeup.clear()
+                wake_task = asyncio.create_task(self._write_wakeup.wait())
+                done, _pending = await asyncio.wait(
+                    {read_task, wake_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if wake_task not in done:
+                    wake_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await wake_task
+
+                if read_task in done:
+                    try:
+                        data = read_task.result()
+                    except asyncio.CancelledError:
+                        raise
+                    except _SERIAL_ERRORS as e:
+                        if not self._shutdown_requested:
+                            _LOGGER.warning("Serial handler read error: %s", e)
+                            if self._transition_to_error():
+                                self._notify_disconnect()
+                        break
+                    finally:
+                        read_task = None
+
+                    if not data:
+                        if not self._shutdown_requested:
+                            _LOGGER.error(
+                                "Serial EOF - USB device may have been removed"
+                            )
+                            if self._transition_to_error():
+                                self._notify_disconnect()
+                        break
+
+                    for byte in data:
+                        self._process_received_byte(byte)
+                # else: wake-only — keep ``read_task`` for the next wait cycle
+
+        except asyncio.CancelledError:
+            raise
+        except _SERIAL_ERRORS as e:
+            if not self._shutdown_requested:
+                _LOGGER.warning("Serial handler error: %s", e)
+                if self._transition_to_error():
+                    self._notify_disconnect()
+        finally:
+            if read_task is not None and not read_task.done():
+                read_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await read_task
 
     def _process_received_byte(self, byte: int):
         """Process a single received byte."""
