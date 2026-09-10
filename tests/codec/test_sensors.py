@@ -34,13 +34,13 @@ def test_table6_live_temperature_telegram() -> None:
 
 
 def test_table6_live_humidity_telegram() -> None:
-    """Wire type 5, raw 2609 → ~63.71 % (100·n/4095)."""
+    """Wire type 5, raw 2609 → 63.7 % (100·n/4095, 1 decimal)."""
     payload = parse_sensor_payload(LIVE_HUMIDITY)
     assert isinstance(payload, SensorMeasurementPayload)
     assert payload.wire_measurement_type == 5
     assert payload.measurement_type == MeasurementType.HUMIDITY
     assert payload.raw_value == 2609
-    assert payload.humidity_percent == pytest.approx(100.0 * 2609 / 4095)
+    assert payload.humidity_percent == pytest.approx(63.7)
     assert payload.temperature_celsius is None
 
 

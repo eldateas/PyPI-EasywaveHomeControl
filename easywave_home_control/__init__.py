@@ -63,7 +63,7 @@ from .gateway import (
     EntityKind,
 )
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 __all__ = [
     # Factory (primary API)
     "AsyncDeviceFactory",

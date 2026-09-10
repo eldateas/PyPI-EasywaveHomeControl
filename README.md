@@ -4,6 +4,10 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.3.5
+
+- **Humidity** — values rounded to 1 decimal place
+
 ## What's New in 0.3.4
 
 - **Sensor codec = Table 6 only** — type 4 = temperature (`n/20` K), type 5 = humidity (`100·n/4095`); applies to RX11/RX21/RX22 alike

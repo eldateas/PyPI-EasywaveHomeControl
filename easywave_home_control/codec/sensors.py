@@ -56,8 +56,8 @@ def _temperature_celsius(raw_value: int) -> float:
 
 
 def _humidity_percent(raw_value: int) -> float:
-    """Table 6: ``φ = 100 · n / 4095`` percent."""
-    return 100.0 * raw_value / _HUMIDITY_FULL_SCALE
+    """Table 6: ``φ = 100 · n / 4095`` percent, rounded to 1 decimal place."""
+    return round(100.0 * raw_value / _HUMIDITY_FULL_SCALE, 1)
 
 
 @dataclass(frozen=True)
