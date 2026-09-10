@@ -1,9 +1,11 @@
-"""Easywave sensor payload parsing (Spec Table 5 and 6).
+"""Easywave sensor payload parsing (RX Spec Table 5 and 6).
 
-DATA sensors (e.g. STH01 with ``1x DATA``) send 8-byte learn/measurement payloads via
-``EW_RCV_EX`` / ``EWB_RCV``. Other ELDAT products such as ST01 (heating thermostat),
-SH01 (humidity switch), SL01 (light sensor), or RTS40 (motion) use classic
-Easywave button telegrams instead and are **not** parsed by this module.
+``EWB_RCV`` / ``EW_RCV_EX`` with ``info_type`` ``TM_IT_SENSOR_DATA`` (0x02) carry an
+8-byte measurement/learn payload. Layout and scaling follow **Table 6** for all
+RxModule gateways (RX11, RX21, RX22, RX25).
+
+Other ELDAT products such as ST01, SH01, SL01, or RTS40 use classic Easywave
+button telegrams and are **not** parsed by this module.
 """
 
 from __future__ import annotations
@@ -17,28 +19,23 @@ from .exceptions import InvalidPayloadError
 
 
 class SensorPayloadFormat(IntEnum):
-    """How to interpret measurement type codes and raw value scaling."""
+    """Kept for API compatibility; all values use Table 6 (the only valid encoding)."""
+
+    TABLE6 = 0
+    """RX Spec Table 6 (default)."""
 
     NEO = 0
-    """EWneo DATA sensors (STH01): wire type 4 = humidity, 5 = temperature, raw / 100.
-
-    Verified against live STH01 telegrams (centi-°C / centi-% RH). RX21 Table 6
-    Kelvin / ``100·n/4095`` formulas do **not** apply to this air-interface encoding.
-    """
+    """Deprecated alias of ``TABLE6``."""
 
     LEGACY_RX21 = 1
-    """RX21 Table 6: wire type 4 = temperature, 5 = humidity.
-
-    Temperature: ``T_K = n / 20``, ``temperature_celsius = n / 20 - 273.15``.
-    Humidity: ``φ = 100 · n / 4095`` (raw range 0–4095).
-    """
+    """Deprecated alias of ``TABLE6`` (same formulas)."""
 
 
 class MeasurementType(IntEnum):
-    """Semantic measurement unit (after format-specific wire-type mapping)."""
+    """Measurement type codes from Table 6 (offset 2, bits 7–2)."""
 
-    HUMIDITY = 4
-    TEMPERATURE = 5
+    TEMPERATURE = 4
+    HUMIDITY = 5
 
 
 class BatteryLevel(IntEnum):
@@ -48,39 +45,19 @@ class BatteryLevel(IntEnum):
     FULL = 7
 
 
-_NEO_VALUE_SCALE = 100.0
-_TABLE6_TEMP_RAW_PER_KELVIN = 20.0
+_TEMP_RAW_PER_KELVIN = 20.0
 _KELVIN_ZERO_CELSIUS = 273.15
-_TABLE6_HUMIDITY_FULL_SCALE = 4095.0
+_HUMIDITY_FULL_SCALE = 4095.0
 
 
-def _wire_to_semantic_type(
-    wire_type: int, payload_format: SensorPayloadFormat
-) -> MeasurementType | int:
-    if payload_format == SensorPayloadFormat.NEO:
-        # STH01: wire codes match MeasurementType values (4=humidity, 5=temperature).
-        try:
-            return MeasurementType(wire_type)
-        except ValueError:
-            return wire_type
-    # Table 6: wire 4 = temperature, wire 5 = humidity.
-    if wire_type == 4:
-        return MeasurementType.TEMPERATURE
-    if wire_type == 5:
-        return MeasurementType.HUMIDITY
-    return wire_type
+def _temperature_celsius(raw_value: int) -> float:
+    """Table 6: ``T = n/20`` Kelvin → Celsius."""
+    return raw_value / _TEMP_RAW_PER_KELVIN - _KELVIN_ZERO_CELSIUS
 
 
-def _temperature_celsius(raw_value: int, payload_format: SensorPayloadFormat) -> float:
-    if payload_format == SensorPayloadFormat.LEGACY_RX21:
-        return raw_value / _TABLE6_TEMP_RAW_PER_KELVIN - _KELVIN_ZERO_CELSIUS
-    return raw_value / _NEO_VALUE_SCALE
-
-
-def _humidity_percent(raw_value: int, payload_format: SensorPayloadFormat) -> float:
-    if payload_format == SensorPayloadFormat.LEGACY_RX21:
-        return 100.0 * raw_value / _TABLE6_HUMIDITY_FULL_SCALE
-    return raw_value / _NEO_VALUE_SCALE
+def _humidity_percent(raw_value: int) -> float:
+    """Table 6: ``φ = 100 · n / 4095`` percent."""
+    return 100.0 * raw_value / _HUMIDITY_FULL_SCALE
 
 
 @dataclass(frozen=True)
@@ -136,34 +113,32 @@ class SensorMeasurementPayload:
     def temperature_celsius(self) -> float | None:
         if self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        return _temperature_celsius(self.raw_value, self.payload_format)
+        return _temperature_celsius(self.raw_value)
 
     @property
     def temperature_kelvin(self) -> float | None:
-        """Table 6: ``n / 20`` K. NEO: Celsius + 273.15 from centi-degree raw."""
+        """Table 6: ``n / 20`` Kelvin."""
         if self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        if self.payload_format == SensorPayloadFormat.LEGACY_RX21:
-            return self.raw_value / _TABLE6_TEMP_RAW_PER_KELVIN
-        return self.raw_value / _NEO_VALUE_SCALE + _KELVIN_ZERO_CELSIUS
+        return self.raw_value / _TEMP_RAW_PER_KELVIN
 
     @property
     def humidity_percent(self) -> float | None:
         if self.measurement_type != MeasurementType.HUMIDITY:
             return None
-        return _humidity_percent(self.raw_value, self.payload_format)
+        return _humidity_percent(self.raw_value)
 
     @property
     def reference_temperature_celsius(self) -> float | None:
         if not self.has_reference or self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        return _temperature_celsius(self.reference_value, self.payload_format)
+        return _temperature_celsius(self.reference_value)
 
     @property
     def reference_humidity_percent(self) -> float | None:
         if not self.has_reference or self.measurement_type != MeasurementType.HUMIDITY:
             return None
-        return _humidity_percent(self.reference_value, self.payload_format)
+        return _humidity_percent(self.reference_value)
 
     @property
     def battery_is_weak(self) -> bool:
@@ -176,9 +151,14 @@ SensorPayload = Union[SensorLearnPayload, SensorMeasurementPayload]
 def parse_sensor_payload(
     info_data: bytes,
     *,
-    payload_format: SensorPayloadFormat = SensorPayloadFormat.NEO,
+    payload_format: SensorPayloadFormat = SensorPayloadFormat.TABLE6,
 ) -> SensorPayload:
-    """Parse 8-byte sensor payload from EW_RCV_EX or EWB_RCV."""
+    """Parse 8-byte sensor payload from EW_RCV_EX or EWB_RCV (Table 6).
+
+    ``payload_format`` is ignored for scaling/types (always Table 6); retained for
+    call-site compatibility.
+    """
+    del payload_format  # only Table 6 is valid
     if len(info_data) < 8:
         raise InvalidPayloadError(f"Sensor payload must be 8 bytes, got {len(info_data)}")
 
@@ -202,12 +182,19 @@ def parse_sensor_payload(
 
     measurement_raw = info_data[2]
     wire_measurement_type = get_bits(measurement_raw, 7, 2)
-    if wire_measurement_type not in (4, 5):
+    if wire_measurement_type not in (
+        MeasurementType.TEMPERATURE,
+        MeasurementType.HUMIDITY,
+    ):
         raise InvalidPayloadError(
             f"Unsupported sensor measurement type {wire_measurement_type}"
         )
 
-    measurement_type = _wire_to_semantic_type(wire_measurement_type, payload_format)
+    try:
+        measurement_type = MeasurementType(wire_measurement_type)
+    except ValueError:
+        measurement_type = wire_measurement_type
+
     should_ignore = bool(measurement_raw & 0x02)
     has_reference = bool(measurement_raw & 0x01)
     raw_value = int.from_bytes(info_data[3:5], "big")
@@ -225,7 +212,7 @@ def parse_sensor_payload(
         battery_level=battery_level,
         wire_measurement_type=wire_measurement_type,
         measurement_type=measurement_type,
-        payload_format=payload_format,
+        payload_format=SensorPayloadFormat.TABLE6,
         should_ignore=should_ignore,
         has_reference=has_reference,
         raw_value=raw_value,

@@ -8,18 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.4] - 2026-09-10
 
 ### Fixed
-- **`SensorPayloadFormat.LEGACY_RX21` (RX21 Table 6)** — temperature is now
-  `n/20` Kelvin (`temperature_celsius = n/20 − 273.15`); humidity is
-  `100 · n / 4095` %. Replaces the incorrect `/10` scaling. Type mapping remains
-  Table 6 (wire 4 = temperature, 5 = humidity).
-- Reject unsupported measurement wire types `≠ 4/5` for all payload formats.
+- **Sensor payloads (Table 6 only)** — `EWB_RCV` / `EW_RCV_EX` `info_type` 0x02 uses RX
+  Spec Table 6 for **all** RxModule gateways (RX11/RX21/RX22/RX25):
+  - wire type **4 = temperature**, **5 = humidity**
+  - temperature: `T = n/20` Kelvin → `temperature_celsius = n/20 − 273.15`
+  - humidity: `φ = 100 · n / 4095` %
+- Removes the incorrect NEO `/100` centi-unit path (and swapped type codes). Verified
+  against live EasywavePlus `SENSOR_DATA` telegrams (e.g. raw `5947` → `24.20 °C`,
+  raw `2609` → `~63.71 %`).
 
 ### Added
+- `SensorPayloadFormat.TABLE6`; `NEO` / `LEGACY_RX21` remain as deprecated aliases
+  (same Table 6 behavior).
 - `SensorMeasurementPayload.temperature_kelvin`.
-
-### Unchanged
-- **`SensorPayloadFormat.NEO` (default, STH01)** — still wire 4 = humidity,
-  5 = temperature, air-interface `/100` centi-units (same as 0.3.1/0.3.3).
 
 ## [0.3.3] - 2026-09-10
 

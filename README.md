@@ -6,8 +6,8 @@ Optimized for **Home Assistant integration** with a non-blocking async API and a
 
 ## What's New in 0.3.4
 
-- **Table 6 (`LEGACY_RX21`)** — Kelvin `n/20` and humidity `100·n/4095` (fixes wrong `/10`)
-- **NEO/STH01 (default)** — unchanged `/100` centi-units
+- **Sensor codec = Table 6 only** — type 4 = temperature (`n/20` K), type 5 = humidity (`100·n/4095`); applies to RX11/RX21/RX22 alike
+- Removes incorrect NEO `/100` scaling; verified with live `SENSOR_DATA` telegrams
 - `SensorMeasurementPayload.temperature_kelvin`
 
 ## What's New in 0.3.3
@@ -178,22 +178,20 @@ raw = encode_ewb_state(
 
 Supported device types: switch, dual/quad switch, dimmer, motor, dual/quad motor.
 
-### DATA sensors (STH01, EWneo)
+### DATA sensors (Table 6 / ``TM_IT_SENSOR_DATA``)
 
 ```python
-from easywave_home_control.codec import MeasurementType, SensorPayloadFormat, parse_sensor_payload
+from easywave_home_control.codec import MeasurementType, parse_sensor_payload
 
-payload = parse_sensor_payload(info_data)  # default: SensorPayloadFormat.NEO
+payload = parse_sensor_payload(info_data)  # RX Spec Table 6
 if payload.measurement_type == MeasurementType.TEMPERATURE:
-    print(payload.temperature_celsius)
+    print(payload.temperature_celsius)  # n/20 Kelvin → °C
 elif payload.measurement_type == MeasurementType.HUMIDITY:
-    print(payload.humidity_percent)
-
-# Legacy RX21 Table 6 sensors (/10, swapped wire types):
-legacy = parse_sensor_payload(info_data, payload_format=SensorPayloadFormat.LEGACY_RX21)
+    print(payload.humidity_percent)  # 100·n/4095
 ```
 
-ST01/ST02, SH01, SL01, and RTS40 use classic button telegrams, not this 8-byte payload.
+Same encoding on RX11, RX21, and RX22. ST01/ST02, SH01, SL01, and RTS40 use classic
+button telegrams, not this 8-byte payload.
 
 ### Easywave Basic (EW)
 
