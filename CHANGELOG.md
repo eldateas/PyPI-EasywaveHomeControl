@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-09-10
+
+### Fixed
+- **EWneo sensor value scaling (STH01)** — temperature and humidity now follow the ELDAT
+  measurement encoding: temperature raw `n` is Kelvin in `1/20` K steps
+  (`temperature_celsius = n/20 − 273.15`); humidity is `100 · n / 4095` percent
+  (raw range 0–4095). Replaces the incorrect `/100` centi-unit scaling from 0.2.1.
+
+### Added
+- `SensorMeasurementPayload.temperature_kelvin` — NEO raw temperature as Kelvin (`n/20`).
+
 ## [0.3.1] - 2026-08-03
 
 ### Fixed

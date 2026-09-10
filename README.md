@@ -4,6 +4,11 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.3.2
+
+- **EWneo sensor scaling fix** — temperature `n/20` Kelvin → °C via `− 273.15`; humidity `100·n/4095` %
+- `SensorMeasurementPayload.temperature_kelvin` for NEO payloads
+
 ## What's New in 0.3.1
 
 - **Dual/quad motor summary fix** — mode 0 reports position (`0–100`) in the same field as activity; `MotorSummaryChannelState.position` is now populated correctly

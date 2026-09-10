@@ -20,7 +20,12 @@ class SensorPayloadFormat(IntEnum):
     """How to interpret measurement type codes and raw value scaling."""
 
     NEO = 0
-    """EWneo DATA sensors (STH01): wire type 4 = humidity, 5 = temperature, raw / 100."""
+    """EWneo DATA sensors (STH01): wire type 4 = humidity, 5 = temperature.
+
+    Temperature raw ``n`` is Kelvin in 1/20 K steps (``T_K = n / 20``);
+    ``temperature_celsius`` returns ``n / 20 - 273.15``.
+    Humidity raw ``n`` (0–4095) scales as ``100 * n / 4095`` percent.
+    """
 
     LEGACY_RX21 = 1
     """RX21 Table 6 legacy sensors: wire type 4 = temperature, 5 = humidity, raw / 10."""
@@ -40,8 +45,10 @@ class BatteryLevel(IntEnum):
     FULL = 7
 
 
-_NEO_VALUE_SCALE = 100.0
 _LEGACY_VALUE_SCALE = 10.0
+_NEO_TEMP_RAW_PER_KELVIN = 20.0
+_KELVIN_ZERO_CELSIUS = 273.15
+_NEO_HUMIDITY_FULL_SCALE = 4095.0
 
 
 def _wire_to_semantic_type(
@@ -59,8 +66,16 @@ def _wire_to_semantic_type(
     return wire_type
 
 
-def _value_scale(payload_format: SensorPayloadFormat) -> float:
-    return _LEGACY_VALUE_SCALE if payload_format == SensorPayloadFormat.LEGACY_RX21 else _NEO_VALUE_SCALE
+def _temperature_celsius(raw_value: int, payload_format: SensorPayloadFormat) -> float:
+    if payload_format == SensorPayloadFormat.LEGACY_RX21:
+        return raw_value / _LEGACY_VALUE_SCALE
+    return raw_value / _NEO_TEMP_RAW_PER_KELVIN - _KELVIN_ZERO_CELSIUS
+
+
+def _humidity_percent(raw_value: int, payload_format: SensorPayloadFormat) -> float:
+    if payload_format == SensorPayloadFormat.LEGACY_RX21:
+        return raw_value / _LEGACY_VALUE_SCALE
+    return 100.0 * raw_value / _NEO_HUMIDITY_FULL_SCALE
 
 
 @dataclass(frozen=True)
@@ -116,25 +131,34 @@ class SensorMeasurementPayload:
     def temperature_celsius(self) -> float | None:
         if self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        return self.raw_value / _value_scale(self.payload_format)
+        return _temperature_celsius(self.raw_value, self.payload_format)
+
+    @property
+    def temperature_kelvin(self) -> float | None:
+        """NEO: ``raw / 20`` Kelvin. Legacy format has no Kelvin encoding."""
+        if self.measurement_type != MeasurementType.TEMPERATURE:
+            return None
+        if self.payload_format == SensorPayloadFormat.LEGACY_RX21:
+            return None
+        return self.raw_value / _NEO_TEMP_RAW_PER_KELVIN
 
     @property
     def humidity_percent(self) -> float | None:
         if self.measurement_type != MeasurementType.HUMIDITY:
             return None
-        return self.raw_value / _value_scale(self.payload_format)
+        return _humidity_percent(self.raw_value, self.payload_format)
 
     @property
     def reference_temperature_celsius(self) -> float | None:
         if not self.has_reference or self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        return self.reference_value / _value_scale(self.payload_format)
+        return _temperature_celsius(self.reference_value, self.payload_format)
 
     @property
     def reference_humidity_percent(self) -> float | None:
         if not self.has_reference or self.measurement_type != MeasurementType.HUMIDITY:
             return None
-        return self.reference_value / _value_scale(self.payload_format)
+        return _humidity_percent(self.reference_value, self.payload_format)
 
     @property
     def battery_is_weak(self) -> bool:

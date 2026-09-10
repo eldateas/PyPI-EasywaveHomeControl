@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "easywave-home-control"
-version = "0.3.1"
+version = "0.3.2"
 description = "Pure Python async/await implementation for controlling EASYWAVE radio modules (RX11, RX21, RX22, RX25, RX09)"
 readme = "README.md"
 license = "Apache-2.0"
