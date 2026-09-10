@@ -5,13 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-09-10
+
+### Fixed
+- **EWneo sensor value scaling (STH01)** — restore air-interface `/100` centi-units for
+  temperature (°C) and humidity (%), verified against live telegrams (e.g. raw `2505` →
+  `25.05 °C`, raw `5942` → `59.42 %`). Supersedes 0.3.2, which incorrectly applied ADC-style
+  Kelvin (`n/20`) and humidity (`100·n/4095`) formulas to the wire payload.
+
 ## [0.3.2] - 2026-09-10
 
 ### Fixed
-- **EWneo sensor documentation / scaling confirmation (STH01)** — air-interface payloads use
-  `/100` centi-units for temperature (°C) and humidity (%), verified against live telegrams
-  (e.g. raw `2505` → `25.05 °C`, raw `5942` → `59.42 %`). Internal ADC-style formulas
-  (Kelvin `n/20`, humidity `100·n/4095`) must **not** be applied to the wire field.
+- **EWneo sensor value scaling (STH01)** — *(incorrect; use 0.3.3)* attempted ELDAT ADC-style
+  Kelvin/`4095` scaling on air-interface payloads.
 
 ## [0.3.1] - 2026-08-03
 

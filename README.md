@@ -4,9 +4,9 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
-## What's New in 0.3.2
+## What's New in 0.3.3
 
-- **EWneo sensor scaling** — confirmed `/100` centi-°C / centi-% for STH01 wire payloads (ADC Kelvin/`4095` formulas do not apply on air interface)
+- **EWneo sensor scaling** — restore verified `/100` centi-°C / centi-% for STH01 wire payloads (fixes incorrect 0.3.2 Kelvin/`4095` formulas)
 
 ## What's New in 0.3.1
 
