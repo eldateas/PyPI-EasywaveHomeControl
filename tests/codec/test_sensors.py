@@ -113,22 +113,32 @@ def test_measurement_with_reference_value() -> None:
     assert payload.reference_temperature_celsius == pytest.approx(25.0)
 
 
-def test_legacy_rx21_temperature_and_humidity() -> None:
-    """RX21 Table 6: wire type 4 = temp, 5 = humidity, raw / 10."""
+def test_legacy_rx21_table6_temperature_and_humidity() -> None:
+    """RX21 Table 6: type 4 = temp (n/20 K), type 5 = humidity (100·n/4095)."""
+    # 5863 → 293.15 K → 20.0 °C
     temp = parse_sensor_payload(
-        bytes([0x00, 0x40, 0x10, 0x01, 0x07, 0x00, 0x00, 0x00]),
+        bytes([0x00, 0x40, 0x10, 0x16, 0xE7, 0x00, 0x00, 0x00]),
         payload_format=SensorPayloadFormat.LEGACY_RX21,
     )
     assert isinstance(temp, SensorMeasurementPayload)
     assert temp.wire_measurement_type == 4
     assert temp.measurement_type == MeasurementType.TEMPERATURE
-    assert temp.temperature_celsius == pytest.approx(26.3)
+    assert temp.temperature_kelvin == pytest.approx(293.15)
+    assert temp.temperature_celsius == pytest.approx(20.0)
 
+    # 2048 → ~50 % RH
     humidity = parse_sensor_payload(
-        bytes([0x00, 0x40, 0x14, 0x02, 0x52, 0x00, 0x00, 0x00]),
+        bytes([0x00, 0x40, 0x14, 0x08, 0x00, 0x00, 0x00, 0x00]),
         payload_format=SensorPayloadFormat.LEGACY_RX21,
     )
     assert isinstance(humidity, SensorMeasurementPayload)
     assert humidity.wire_measurement_type == 5
     assert humidity.measurement_type == MeasurementType.HUMIDITY
-    assert humidity.humidity_percent == pytest.approx(59.4)
+    assert humidity.humidity_percent == pytest.approx(100.0 * 2048 / 4095)
+
+    full = parse_sensor_payload(
+        bytes([0x00, 0x40, 0x14, 0x0F, 0xFF, 0x00, 0x00, 0x00]),
+        payload_format=SensorPayloadFormat.LEGACY_RX21,
+    )
+    assert isinstance(full, SensorMeasurementPayload)
+    assert full.humidity_percent == pytest.approx(100.0)

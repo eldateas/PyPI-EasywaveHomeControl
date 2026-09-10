@@ -22,13 +22,16 @@ class SensorPayloadFormat(IntEnum):
     NEO = 0
     """EWneo DATA sensors (STH01): wire type 4 = humidity, 5 = temperature, raw / 100.
 
-    Verified against live STH01 telegrams (centi-°C / centi-% RH). Internal ADC
-    formulas (e.g. Kelvin ``n/20`` or humidity ``100·n/4095``) do **not** apply to
-    the air-interface payload field.
+    Verified against live STH01 telegrams (centi-°C / centi-% RH). RX21 Table 6
+    Kelvin / ``100·n/4095`` formulas do **not** apply to this air-interface encoding.
     """
 
     LEGACY_RX21 = 1
-    """RX21 Table 6 legacy sensors: wire type 4 = temperature, 5 = humidity, raw / 10."""
+    """RX21 Table 6: wire type 4 = temperature, 5 = humidity.
+
+    Temperature: ``T_K = n / 20``, ``temperature_celsius = n / 20 - 273.15``.
+    Humidity: ``φ = 100 · n / 4095`` (raw range 0–4095).
+    """
 
 
 class MeasurementType(IntEnum):
@@ -46,17 +49,21 @@ class BatteryLevel(IntEnum):
 
 
 _NEO_VALUE_SCALE = 100.0
-_LEGACY_VALUE_SCALE = 10.0
+_TABLE6_TEMP_RAW_PER_KELVIN = 20.0
+_KELVIN_ZERO_CELSIUS = 273.15
+_TABLE6_HUMIDITY_FULL_SCALE = 4095.0
 
 
 def _wire_to_semantic_type(
     wire_type: int, payload_format: SensorPayloadFormat
 ) -> MeasurementType | int:
     if payload_format == SensorPayloadFormat.NEO:
+        # STH01: wire codes match MeasurementType values (4=humidity, 5=temperature).
         try:
             return MeasurementType(wire_type)
         except ValueError:
             return wire_type
+    # Table 6: wire 4 = temperature, wire 5 = humidity.
     if wire_type == 4:
         return MeasurementType.TEMPERATURE
     if wire_type == 5:
@@ -64,8 +71,16 @@ def _wire_to_semantic_type(
     return wire_type
 
 
-def _value_scale(payload_format: SensorPayloadFormat) -> float:
-    return _LEGACY_VALUE_SCALE if payload_format == SensorPayloadFormat.LEGACY_RX21 else _NEO_VALUE_SCALE
+def _temperature_celsius(raw_value: int, payload_format: SensorPayloadFormat) -> float:
+    if payload_format == SensorPayloadFormat.LEGACY_RX21:
+        return raw_value / _TABLE6_TEMP_RAW_PER_KELVIN - _KELVIN_ZERO_CELSIUS
+    return raw_value / _NEO_VALUE_SCALE
+
+
+def _humidity_percent(raw_value: int, payload_format: SensorPayloadFormat) -> float:
+    if payload_format == SensorPayloadFormat.LEGACY_RX21:
+        return 100.0 * raw_value / _TABLE6_HUMIDITY_FULL_SCALE
+    return raw_value / _NEO_VALUE_SCALE
 
 
 @dataclass(frozen=True)
@@ -121,25 +136,34 @@ class SensorMeasurementPayload:
     def temperature_celsius(self) -> float | None:
         if self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        return self.raw_value / _value_scale(self.payload_format)
+        return _temperature_celsius(self.raw_value, self.payload_format)
+
+    @property
+    def temperature_kelvin(self) -> float | None:
+        """Table 6: ``n / 20`` K. NEO: Celsius + 273.15 from centi-degree raw."""
+        if self.measurement_type != MeasurementType.TEMPERATURE:
+            return None
+        if self.payload_format == SensorPayloadFormat.LEGACY_RX21:
+            return self.raw_value / _TABLE6_TEMP_RAW_PER_KELVIN
+        return self.raw_value / _NEO_VALUE_SCALE + _KELVIN_ZERO_CELSIUS
 
     @property
     def humidity_percent(self) -> float | None:
         if self.measurement_type != MeasurementType.HUMIDITY:
             return None
-        return self.raw_value / _value_scale(self.payload_format)
+        return _humidity_percent(self.raw_value, self.payload_format)
 
     @property
     def reference_temperature_celsius(self) -> float | None:
         if not self.has_reference or self.measurement_type != MeasurementType.TEMPERATURE:
             return None
-        return self.reference_value / _value_scale(self.payload_format)
+        return _temperature_celsius(self.reference_value, self.payload_format)
 
     @property
     def reference_humidity_percent(self) -> float | None:
         if not self.has_reference or self.measurement_type != MeasurementType.HUMIDITY:
             return None
-        return self.reference_value / _value_scale(self.payload_format)
+        return _humidity_percent(self.reference_value, self.payload_format)
 
     @property
     def battery_is_weak(self) -> bool:
@@ -178,7 +202,7 @@ def parse_sensor_payload(
 
     measurement_raw = info_data[2]
     wire_measurement_type = get_bits(measurement_raw, 7, 2)
-    if wire_measurement_type not in (4, 5) and payload_format == SensorPayloadFormat.NEO:
+    if wire_measurement_type not in (4, 5):
         raise InvalidPayloadError(
             f"Unsupported sensor measurement type {wire_measurement_type}"
         )

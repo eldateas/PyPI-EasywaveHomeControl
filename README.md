@@ -4,6 +4,12 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.3.4
+
+- **Table 6 (`LEGACY_RX21`)** — Kelvin `n/20` and humidity `100·n/4095` (fixes wrong `/10`)
+- **NEO/STH01 (default)** — unchanged `/100` centi-units
+- `SensorMeasurementPayload.temperature_kelvin`
+
 ## What's New in 0.3.3
 
 - **EWneo sensor scaling** — restore verified `/100` centi-°C / centi-% for STH01 wire payloads (fixes incorrect 0.3.2 Kelvin/`4095` formulas)

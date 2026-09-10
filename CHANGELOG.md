@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-09-10
+
+### Fixed
+- **`SensorPayloadFormat.LEGACY_RX21` (RX21 Table 6)** — temperature is now
+  `n/20` Kelvin (`temperature_celsius = n/20 − 273.15`); humidity is
+  `100 · n / 4095` %. Replaces the incorrect `/10` scaling. Type mapping remains
+  Table 6 (wire 4 = temperature, 5 = humidity).
+- Reject unsupported measurement wire types `≠ 4/5` for all payload formats.
+
+### Added
+- `SensorMeasurementPayload.temperature_kelvin`.
+
+### Unchanged
+- **`SensorPayloadFormat.NEO` (default, STH01)** — still wire 4 = humidity,
+  5 = temperature, air-interface `/100` centi-units (same as 0.3.1/0.3.3).
+
 ## [0.3.3] - 2026-09-10
 
 ### Fixed
