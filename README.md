@@ -6,8 +6,7 @@ Optimized for **Home Assistant integration** with a non-blocking async API and a
 
 ## What's New in 0.3.2
 
-- **EWneo sensor scaling fix** — temperature `n/20` Kelvin → °C via `− 273.15`; humidity `100·n/4095` %
-- `SensorMeasurementPayload.temperature_kelvin` for NEO payloads
+- **EWneo sensor scaling** — confirmed `/100` centi-°C / centi-% for STH01 wire payloads (ADC Kelvin/`4095` formulas do not apply on air interface)
 
 ## What's New in 0.3.1
 
