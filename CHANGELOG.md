@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-09-11
+
+### Fixed
+- **Sensor payloads (Table 6 only)** — `EWB_RCV` / `EW_RCV_EX` `info_type` 0x02 uses RX
+  Spec Table 6 for **all** RxModule gateways (RX11/RX21/RX22/RX25):
+  - wire type **4 = temperature**, **5 = humidity**
+  - temperature: `T = n/20` Kelvin → `temperature_celsius = n/20 − 273.15`
+  - humidity: `φ = 100 · n / 4095` % (rounded to **1 decimal** place)
+- Removes the incorrect NEO `/100` centi-unit path (and swapped type codes). Verified
+  against live EasywavePlus `SENSOR_DATA` telegrams (e.g. raw `5947` → `24.20 °C`,
+  raw `2609` → `63.7 %`). Ported from 0.3.4/0.3.5 onto the 0.4.x (serialx) line.
+
+### Added
+- `SensorPayloadFormat.TABLE6`; `NEO` / `LEGACY_RX21` remain as deprecated aliases
+  (same Table 6 behavior).
+- `SensorMeasurementPayload.temperature_kelvin`.
+
 ## [0.4.0] - 2026-09-03
 
 ### Changed

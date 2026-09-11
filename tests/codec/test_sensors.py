@@ -13,35 +13,63 @@ from easywave_home_control.codec.sensors import (
     SensorMeasurementPayload,
 )
 
+# Live EasywavePlusDaten SENSOR_DATA (info_type 0x02) payloads after type byte.
+LIVE_TEMP = bytes([0x80, 0x78, 0x12, 0x17, 0x3B, 0x00, 0x00, 0x35])
+LIVE_HUMIDITY = bytes([0x80, 0x78, 0x16, 0x0A, 0x31, 0x00, 0x00, 0x35])
 
-def test_neo_sth01_temperature_payload_bytes() -> None:
-    """STH01: wire type 5, raw 2630 -> 26.30 °C (centi-degrees)."""
-    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x14, 0x0A, 0x46, 0x00, 0x00, 0x00]))
+
+def test_table6_live_temperature_telegram() -> None:
+    """Wire type 4, raw 5947 → 24.20 °C (n/20 K − 273.15)."""
+    payload = parse_sensor_payload(LIVE_TEMP)
     assert isinstance(payload, SensorMeasurementPayload)
-    assert payload.wire_measurement_type == 5
+    assert payload.wire_measurement_type == 4
     assert payload.measurement_type == MeasurementType.TEMPERATURE
-    assert payload.payload_format == SensorPayloadFormat.NEO
-    assert payload.temperature_celsius == pytest.approx(26.3)
+    assert payload.payload_format == SensorPayloadFormat.TABLE6
+    assert payload.has_battery
+    assert payload.battery_level == BatteryLevel.FULL
+    assert payload.raw_value == 5947
+    assert payload.temperature_kelvin == pytest.approx(297.35)
+    assert payload.temperature_celsius == pytest.approx(24.20)
     assert payload.humidity_percent is None
 
 
-def test_neo_sth01_humidity_payload_bytes() -> None:
-    """STH01: wire type 4, raw 5942 -> 59.42 % (centi-percent)."""
-    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x10, 0x17, 0x36, 0x00, 0x00, 0x00]))
+def test_table6_live_humidity_telegram() -> None:
+    """Wire type 5, raw 2609 → 63.7 % (100·n/4095, 1 decimal)."""
+    payload = parse_sensor_payload(LIVE_HUMIDITY)
     assert isinstance(payload, SensorMeasurementPayload)
-    assert payload.wire_measurement_type == 4
+    assert payload.wire_measurement_type == 5
     assert payload.measurement_type == MeasurementType.HUMIDITY
-    assert payload.humidity_percent == pytest.approx(59.42)
+    assert payload.raw_value == 2609
+    assert payload.humidity_percent == pytest.approx(63.7)
     assert payload.temperature_celsius is None
 
 
-def test_measurement_type_wire_values() -> None:
-    assert MeasurementType.HUMIDITY == 4
-    assert MeasurementType.TEMPERATURE == 5
+def test_table6_humidity_full_scale() -> None:
+    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x14, 0x0F, 0xFF, 0x00, 0x00, 0x00]))
+    assert isinstance(payload, SensorMeasurementPayload)
+    assert payload.measurement_type == MeasurementType.HUMIDITY
+    assert payload.humidity_percent == pytest.approx(100.0)
+
+
+def test_measurement_type_matches_table6_wire_codes() -> None:
+    assert MeasurementType.TEMPERATURE == 4
+    assert MeasurementType.HUMIDITY == 5
+
+
+def test_deprecated_format_aliases_still_use_table6() -> None:
+    """NEO / LEGACY_RX21 aliases must not revive /100 scaling."""
+    neo = parse_sensor_payload(LIVE_TEMP, payload_format=SensorPayloadFormat.NEO)
+    legacy = parse_sensor_payload(
+        LIVE_TEMP, payload_format=SensorPayloadFormat.LEGACY_RX21
+    )
+    assert isinstance(neo, SensorMeasurementPayload)
+    assert isinstance(legacy, SensorMeasurementPayload)
+    assert neo.temperature_celsius == pytest.approx(24.20)
+    assert legacy.temperature_celsius == pytest.approx(24.20)
 
 
 def test_sth01_learn_capabilities_temperature_and_humidity() -> None:
-    """STH01 learn telegram: capability bits 4 (temp) and 5 (humidity)."""
+    """Learn telegram: capability bits 4 (temp) and 5 (humidity)."""
     caps = (1 << 4) | (1 << 5)
     payload = parse_sensor_payload(
         bytes([0x00, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, caps & 0xFF])
@@ -77,8 +105,7 @@ def test_learn_humidity_only() -> None:
 
 
 def test_measurement_battery_weak() -> None:
-    """Battery level 0 in flags byte -> weak."""
-    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x14, 0x0A, 0x46, 0x00, 0x00, 0x00]))
+    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x10, 0x16, 0xE7, 0x00, 0x00, 0x00]))
     assert isinstance(payload, SensorMeasurementPayload)
     assert payload.has_battery
     assert payload.battery_level == BatteryLevel.WEAK
@@ -86,36 +113,16 @@ def test_measurement_battery_weak() -> None:
 
 
 def test_measurement_should_ignore_bit() -> None:
-    """Spec Table 6 bit 1: host should ignore this data bit."""
-    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x16, 0x0A, 0x46, 0x00, 0x00, 0x00]))
+    """Table 6 bit 1 on measurement type byte."""
+    payload = parse_sensor_payload(LIVE_TEMP)
     assert isinstance(payload, SensorMeasurementPayload)
     assert payload.should_ignore
 
 
 def test_measurement_with_reference_value() -> None:
-    """Bit 0 set: reference value present (same scale as primary)."""
-    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x15, 0x0A, 0x46, 0x09, 0xC4, 0x00]))
+    """Bit 0 set: reference uses same Table 6 scale (25 °C → raw 5963)."""
+    payload = parse_sensor_payload(bytes([0x00, 0x40, 0x11, 0x16, 0xE7, 0x17, 0x4B, 0x00]))
     assert isinstance(payload, SensorMeasurementPayload)
     assert payload.has_reference
+    assert payload.reference_value == 5963
     assert payload.reference_temperature_celsius == pytest.approx(25.0)
-
-
-def test_legacy_rx21_temperature_and_humidity() -> None:
-    """RX21 Table 6: wire type 4 = temp, 5 = humidity, raw / 10."""
-    temp = parse_sensor_payload(
-        bytes([0x00, 0x40, 0x10, 0x01, 0x07, 0x00, 0x00, 0x00]),
-        payload_format=SensorPayloadFormat.LEGACY_RX21,
-    )
-    assert isinstance(temp, SensorMeasurementPayload)
-    assert temp.wire_measurement_type == 4
-    assert temp.measurement_type == MeasurementType.TEMPERATURE
-    assert temp.temperature_celsius == pytest.approx(26.3)
-
-    humidity = parse_sensor_payload(
-        bytes([0x00, 0x40, 0x14, 0x02, 0x52, 0x00, 0x00, 0x00]),
-        payload_format=SensorPayloadFormat.LEGACY_RX21,
-    )
-    assert isinstance(humidity, SensorMeasurementPayload)
-    assert humidity.wire_measurement_type == 5
-    assert humidity.measurement_type == MeasurementType.HUMIDITY
-    assert humidity.humidity_percent == pytest.approx(59.4)

@@ -4,6 +4,12 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.4.1
+
+- **Sensor codec = Table 6 only** — type 4 = temperature (`n/20` K), type 5 = humidity (`100·n/4095`); applies to RX11/RX21/RX22/RX25
+- Removes incorrect NEO `/100` scaling; humidity rounded to 1 decimal; verified with live `SENSOR_DATA` telegrams
+- `SensorMeasurementPayload.temperature_kelvin`; `NEO` / `LEGACY_RX21` kept as deprecated aliases
+
 ## What's New in 0.4.0
 
 - **HA `async-dependency`** — serial I/O via `serialx` async APIs; no blocking `pyserial` on the event loop
@@ -176,20 +182,25 @@ raw = encode_ewb_state(
 
 Supported device types: switch, dual/quad switch, dimmer, motor, dual/quad motor.
 
-### DATA sensors (STH01, EWneo)
+### DATA sensors (STH01 / SENSOR_DATA)
+
+RX Spec **Table 6** is the only valid encoding for `info_type` 0x02 on all RxModule
+gateways (RX11/RX21/RX22/RX25):
+
+- wire type **4** = temperature → `T = n/20` Kelvin → `temperature_celsius = n/20 − 273.15`
+- wire type **5** = humidity → `φ = 100 · n / 4095` % (rounded to 1 decimal)
 
 ```python
-from easywave_home_control.codec import MeasurementType, SensorPayloadFormat, parse_sensor_payload
+from easywave_home_control.codec import MeasurementType, parse_sensor_payload
 
-payload = parse_sensor_payload(info_data)  # default: SensorPayloadFormat.NEO
+payload = parse_sensor_payload(info_data)  # always Table 6
 if payload.measurement_type == MeasurementType.TEMPERATURE:
-    print(payload.temperature_celsius)
+    print(payload.temperature_celsius, payload.temperature_kelvin)
 elif payload.measurement_type == MeasurementType.HUMIDITY:
     print(payload.humidity_percent)
-
-# Legacy RX21 Table 6 sensors (/10, swapped wire types):
-legacy = parse_sensor_payload(info_data, payload_format=SensorPayloadFormat.LEGACY_RX21)
 ```
+
+`SensorPayloadFormat.NEO` / `LEGACY_RX21` remain as deprecated aliases (same Table 6 behavior).
 
 ST01/ST02, SH01, SL01, and RTS40 use classic button telegrams, not this 8-byte payload.
 
