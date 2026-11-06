@@ -946,53 +946,6 @@ class RxModule:
             else:
                 break
 
-    def _remove_request(self, req: Request) -> bool:
-        """Remove a request from queues or pending dict.
-
-        Args:
-            req: Request to remove
-
-        Returns:
-            True if request was found and removed, False otherwise
-        """
-        with self._protocol_lock:
-            # Try to remove from queued list
-            if self._tx_req_queued_size > 0:
-                front = self._tx_req_queued_front
-                for _ in range(self._tx_req_queued_size):
-                    idx = (front + _) % self.MAX_REQUEST_QUEUED
-                    if self._tx_req_queued[idx] is req:
-                        self._tx_req_queued[idx] = None
-                        # Adjust pointers if needed
-                        if idx == self._tx_req_queued_front:
-                            self._tx_req_queued_front = (
-                                self._tx_req_queued_front + 1
-                            ) % self.MAX_REQUEST_QUEUED
-                        self._tx_req_queued_size -= 1
-                        return True
-
-            # Try to remove from sent list
-            if self._tx_req_sent_size > 0:
-                front = self._tx_req_sent_front
-                for _ in range(self._tx_req_sent_size):
-                    idx = (front + _) % self.MAX_REQUEST_COUNT
-                    if self._tx_req_sent[idx] is req:
-                        self._tx_req_sent[idx] = None
-                        # Adjust pointers if needed
-                        if idx == self._tx_req_sent_front:
-                            self._tx_req_sent_front = (
-                                self._tx_req_sent_front + 1
-                            ) % self.MAX_REQUEST_COUNT
-                        self._tx_req_sent_size -= 1
-                        return True
-
-            # Try to remove from pending dict
-            if req.handle in self._req_pending:
-                del self._req_pending[req.handle]
-                return True
-
-        return False
-
     async def _wait_for_request(self, req: Request, timeout: float | None) -> bool:
         """Wait for a request with proper timeout and cleanup.
 
@@ -1003,18 +956,81 @@ class RxModule:
         Returns:
             True if request completed, False if timeout occurred
         """
-        completed = await req.wait(timeout)
+        try:
+            completed = await req.wait(timeout)
+        except asyncio.CancelledError:
+            self._release_outstanding_request(
+                req,
+                result=ErrorCode.ERR_CANCELED,
+                reason="cancelled",
+            )
+            raise
 
         if not completed:
-            # Timeout occurred - remove the request cleanly
-            _LOGGER.warning(
-                "Request '%s' timed out (%.1fs) - removing from queue",
-                req.req_str,
-                timeout if timeout is not None else -1,
+            waited = timeout if timeout is not None else -1
+            self._release_outstanding_request(
+                req,
+                result=ErrorCode.ERR_RF_TIMEOUT,
+                reason=f"timed out ({waited:.1f}s)",
             )
-            self._remove_request(req)
 
         return completed
+
+    def _release_outstanding_request(self, req: Request, *, result: int, reason: str) -> None:
+        """Drop a request the caller is no longer waiting for.
+
+        A receive such as ``EW_RCV_EX`` stays in ``_req_pending`` until a telegram
+        arrives. Queued requests are discarded. A request that already has a
+        module handle is cancelled on the device. A request still waiting for
+        its IPP stays in the sent list with ``cancel`` set, so the IPP path
+        sends ``CANCEL_IO`` once the handle is known.
+        """
+        if req.completed:
+            return
+
+        _LOGGER.warning("Request '%s' %s - removing from queue", req.req_str, reason)
+        req.cancel = True
+        req.icp = ICP(handle=req.handle, result=result)
+        req.signal()
+
+        with self._protocol_lock:
+            if self._drop_queued_request(req):
+                return
+            # No handle yet: keep the sent entry so the IPP path sends CANCEL_IO.
+            if self._sent_request_is(req):
+                return
+            if req.handle and self._req_pending.get(req.handle) is req:
+                del self._req_pending[req.handle]
+                self._cancel_request_impl(req)
+                self._cancel_tolerance_until = time.time() + 2.0
+
+    def _drop_queued_request(self, req: Request) -> bool:
+        """Remove ``req`` from the not-yet-sent queue. Caller holds ``_protocol_lock``."""
+        if self._tx_req_queued_size == 0:
+            return False
+        kept: list[Request] = []
+        found = False
+        while self._tx_req_queued_size > 0:
+            item = self._dequeue_queued()
+            if item is req:
+                found = True
+                continue
+            if item is not None:
+                kept.append(item)
+        for item in kept:
+            self._enqueue_queued(item)
+        return found
+
+    def _sent_request_is(self, req: Request) -> bool:
+        """Return whether ``req`` is still waiting for an IPP. Caller holds the lock."""
+        if self._tx_req_sent_size == 0:
+            return False
+        front = self._tx_req_sent_front
+        for offset in range(self._tx_req_sent_size):
+            idx = (front + offset) % self.MAX_REQUEST_COUNT
+            if self._tx_req_sent[idx] is req:
+                return True
+        return False
 
     # ================================================================================================
     # SERIAL COMMUNICATION
@@ -1543,7 +1559,7 @@ class RxModule:
         return req.icp.result, bytes(16)
 
     async def ew_rcv_button_request(
-        self, timeout: float | None = 30.0
+        self, timeout: float | None = None
     ) -> tuple[int, int, bytes, bytes]:
         """Receive EW button press.
 
@@ -1557,7 +1573,7 @@ class RxModule:
         req = self._create_request(irp, 1, 21, "EW_RCV_BUTTON")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EW_RCV_BUTTON)
@@ -1741,7 +1757,7 @@ class RxModule:
                 self._send_cmd_loop_pending.clear()
 
     async def ew_rcv_ex_request(
-        self, timeout: float | None = 30.0
+        self, timeout: float | None = None
     ) -> tuple[int, int, bytes, bytes]:
         """Receive EW extended telegram.
 
@@ -1755,7 +1771,7 @@ class RxModule:
         req = self._create_request(irp, 1, 28, "EW_RCV_EX")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EW_RCV_EX)
@@ -1778,7 +1794,7 @@ class RxModule:
         req = self._create_request(irp, 3, 19, "EWB_GET_FD_SERIAL")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_GET_FD_SERIAL)
@@ -1870,7 +1886,7 @@ class RxModule:
 
         return req.icp.result
 
-    async def ewb_rcv_request(self, timeout: float | None = 30.0) -> tuple[int, int, bytes, bytes]:
+    async def ewb_rcv_request(self, timeout: float | None = None) -> tuple[int, int, bytes, bytes]:
         """Receive EWB telegram.
 
         Args:
@@ -1883,7 +1899,7 @@ class RxModule:
         req = self._create_request(irp, 1, 28, "EWB_RCV")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.EWB_RCV)
@@ -2012,7 +2028,7 @@ class RxModule:
     # ================================================================================================
 
     async def sec_rcv_request(
-        self, timeout: float | None = 30.0
+        self, timeout: float | None = None
     ) -> tuple[int, int, int, int, int, int, int]:
         """Receive Secwave security telegram.
 
@@ -2026,7 +2042,7 @@ class RxModule:
         req = self._create_request(irp, 1, 14, "SEC_RCV")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_RCV)
@@ -2186,7 +2202,7 @@ class RxModule:
         req = self._create_request(irp, 7, 3, "SEC_WR_USERDATA")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         return req.icp.result
 
@@ -2208,7 +2224,7 @@ class RxModule:
         req = self._create_request(irp, 7, 7, "SEC_SEND_CMD_TEL")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_SEND_CMD_TEL)
@@ -2235,7 +2251,7 @@ class RxModule:
         req = self._create_request(irp, 7, 7, "SEC_SEND_LRN_TEL")
 
         self._place_request(req)
-        await req.wait(timeout)
+        await self._wait_for_request(req, timeout)
 
         if req.icp.result == ErrorCode.SUCCESS:
             parsed = parse_icp_data(req.icp, FunctionCode.SEC_SEND_LRN_TEL)

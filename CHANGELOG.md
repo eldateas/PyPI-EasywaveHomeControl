@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-11-06
+
+### Fixed
+- **Receive timeout cleanup** — `ew_rcv_ex_request()` and the other request APIs
+  left the request in the module queue when `Request.wait()` returned `False`.
+  A listen loop with no telegram therefore occupied one of the eight request
+  slots every 30 seconds. Timed-out requests are now dropped. Once the module
+  has assigned a handle, the library sends `CANCEL_IO`. The result code is
+  `ERR_RF_TIMEOUT`.
+- **Cancelled waits** — cancelling the waiting task (`CancelledError`) releases
+  the request the same way. The result code is `ERR_CANCELED`, and the exception
+  is raised again after cleanup. A request that does not have a handle yet stays
+  marked `cancel` until the IPP arrives, which then sends `CANCEL_IO`.
+
+### Changed
+- **Indefinite receive by default** — `EW_RCV_EX`, `EW_RCV_BUTTON`, `EWB_RCV`,
+  `SEC_RCV`, RX09 `receive_telegramm`, and `GatewayConfig.listen_timeout` default
+  to `None`. The RX11 keeps the listen until a telegram arrives or the host
+  cancels it. Pass a timeout only for a bounded wait. The module has no timeout
+  field of its own; a host timeout is implemented as `CANCEL_IO`.
+
 ## [0.4.1] - 2026-09-11
 
 ### Fixed

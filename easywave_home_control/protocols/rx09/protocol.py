@@ -302,7 +302,7 @@ class RX09Protocol(BaseProtocol):
         return 0 if parse_status_response(response or "") is True else 1
 
     async def receive_telegramm(
-        self, timeout: float | None = 30.0
+        self, timeout: float | None = None
     ) -> tuple[int, int | None, str | None]:
         """Receive incoming telegramm (unsolicited).
 

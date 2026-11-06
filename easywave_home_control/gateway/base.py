@@ -128,7 +128,7 @@ class BaseTransceiverGateway(ABC):
         return self._config.request_timeout
 
     @property
-    def listen_timeout(self) -> float:
+    def listen_timeout(self) -> float | None:
         return self._config.listen_timeout
 
     @property

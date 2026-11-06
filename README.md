@@ -4,6 +4,11 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.4.2
+
+- **Receive timeouts release the request slot** — a timed-out or cancelled listen is dropped, and the module is stopped with `CANCEL_IO` once it has a handle
+- **Receive default is `None`** — a listen stays in the RX11 until a telegram arrives or the host cancels it
+
 ## What's New in 0.4.1
 
 - **Sensor codec = Table 6 only** — type 4 = temperature (`n/20` K), type 5 = humidity (`100·n/4095`); applies to RX11/RX21/RX22/RX25
@@ -263,7 +268,7 @@ from easywave_home_control import RX11Device, RX11ErrorCode
 device = await RX11Device.create(port="/dev/ttyUSB0")
 
 # Easywave Basic
-result, info_type, serial, info_data = await device.ew_rcv_ex_request(timeout=30.0)
+result, info_type, serial, info_data = await device.ew_rcv_ex_request()
 await device.ew_send_cmd_request(gateway=gateway_serial, button=0)
 
 # Easywave Bidi
@@ -271,9 +276,11 @@ result, device_type, receiver = await device.ewb_join_device_request(gateway_ser
 result, mode, state = await device.ewb_query_state_request(gateway, receiver, desired_mode=0)
 
 # Secwave
-result, stor_index, *_ = await device.sec_rcv_request(timeout=30.0)
+result, stor_index, *_ = await device.sec_rcv_request()
 await device.sec_learn_request(user_data=0x00000001, timeout=30.0)
 ```
+
+Continuous receives (`ew_rcv_ex_request`, `ew_rcv_button_request`, `ewb_rcv_request`, `sec_rcv_request`, RX09 `receive_telegramm`) default to `timeout=None`. The RX11 keeps that request until a telegram arrives or the host cancels the wait. A finite `timeout` is enforced with `CANCEL_IO` after the module assigns a handle and returns `ERR_RF_TIMEOUT`. Cancelling the awaiting task does the same and then raises `CancelledError` (`ERR_CANCELED`). `GatewayConfig.listen_timeout` follows the same default.
 
 ### RX09 Device
 
@@ -282,7 +289,7 @@ from easywave_home_control import RX09Device, RX09ErrorCode
 
 device = await RX09Device.create(port="/dev/ttyUSB0")
 
-result, serial_number, button = await device.receive_telegramm(timeout=30.0)
+result, serial_number, button = await device.receive_telegramm()
 result, num_positions = await device.query_positions()
 result = await device.send_telegramm(position=0, button="A")
 ```

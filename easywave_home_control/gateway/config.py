@@ -44,5 +44,6 @@ class GatewayConfig:
     auto_listen: bool = False
     """Start a background EW_RCV_EX listener and invoke ``on_telegram``."""
 
-    listen_timeout: float = 30.0
+    listen_timeout: float | None = None
+    """Host-side receive timeout. ``None`` waits until a telegram or cancel."""
     request_timeout: float = 5.0
