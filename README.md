@@ -4,6 +4,10 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.4.3
+
+- **Disconnect during a health check** — a cancelled `PING_RCV` on an already dead link is finished locally, without `CANCEL_IO` or another read
+
 ## What's New in 0.4.2
 
 - **Receive timeouts release the request slot** — a timed-out or cancelled listen is dropped, and the module is stopped with `CANCEL_IO` once it has a handle

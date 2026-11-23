@@ -649,6 +649,39 @@ class RxModule:
             self._connected = False
         return bool(was_connected)
 
+    def _fail_link(self) -> None:
+        """Mark the link dead, drop outbound bytes, and notify once.
+
+        Call this from the serial handler when the transport has already
+        failed. Outstanding waits must finish locally: a later ``CANCEL_IO``
+        or read would touch the closed port.
+        """
+        self._write_queue.clear()
+        if self._transition_to_error():
+            self._notify_disconnect()
+
+    def _fail_open_requests(self, result: int) -> None:
+        """Complete every local request without writing to the module.
+
+        Takes ``_protocol_lock`` itself (re-entrant, so callers may hold it).
+        """
+        with self._protocol_lock:
+            while self._tx_req_queued_size > 0:
+                req = self._dequeue_queued()
+                if req is not None and not req.completed:
+                    req.icp = ICP(handle=0, result=result)
+                    req.signal()
+            while self._tx_req_sent_size > 0:
+                req = self._dequeue_sent()
+                if req is not None and not req.completed:
+                    req.icp = ICP(handle=0, result=result)
+                    req.signal()
+            for req in list(self._req_pending.values()):
+                if not req.completed:
+                    req.icp = ICP(handle=req.handle, result=result)
+                    req.signal()
+            self._req_pending.clear()
+
     @property
     def is_connected(self) -> bool:
         """Check if module is connected and healthy."""
@@ -809,10 +842,17 @@ class RxModule:
 
     async def dispose(self) -> None:
         """Disconnect and cleanup."""
+        link_down = self._hardware_error
         self._shutdown_requested = True
+        if link_down:
+            # Do not write CANCEL_* or read a transport that already failed.
+            self._write_queue.clear()
+            with self._protocol_lock:
+                self._fail_open_requests(ErrorCode.ERR_CANCELED)
         if self._write_wakeup is not None:
             self._write_wakeup.set()
-        await self.cancel_all_io_requests()
+        if not link_down:
+            await self.cancel_all_io_requests()
 
         # Wait for serial handler task
         if self._serial_handler_task and not self._serial_handler_task.done():
@@ -825,23 +865,39 @@ class RxModule:
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._serial_handler_task
 
-        # Drain remaining bytes then close
-        if self._serial and self._serial.is_open:
+        # Drain remaining bytes then close. A failed link must not be read.
+        if not link_down and self._serial and self._serial.is_open:
             with contextlib.suppress(*_SERIAL_ERRORS):
                 await self._drain_input(duration=0.2)
 
-        if self._serial is not None:
-            try:
-                await self._serial.close()
-            except _SERIAL_ERRORS as e:
-                _LOGGER.debug("Error closing serial connection: %s", e)
-            finally:
-                self._serial = None
+        await self._close_serial(link_down=link_down)
 
         self._serial_handler_task = None
         self._write_queue.clear()
         self._write_wakeup = None
         self._connected = False
+
+    async def _close_serial(self, *, link_down: bool) -> None:
+        """Close the port. A dead link is aborted and not waited on forever."""
+        serial = self._serial
+        self._serial = None
+        if serial is None:
+            return
+        if link_down:
+            abort = getattr(serial, "abort", None)
+            if abort is not None:
+                with contextlib.suppress(*_SERIAL_ERRORS, RuntimeError):
+                    abort()
+        try:
+            await asyncio.wait_for(serial.close(), timeout=1.0)
+        except asyncio.TimeoutError:  # builtin TimeoutError only from 3.11
+            _LOGGER.debug("Serial close timed out on a dead link")
+            abort = getattr(serial, "abort", None)
+            if abort is not None:
+                with contextlib.suppress(*_SERIAL_ERRORS, RuntimeError):
+                    abort()
+        except _SERIAL_ERRORS as err:
+            _LOGGER.debug("Error closing serial connection: %s", err)
 
     def _reset_queues(self):
         """Reset all request queues."""
@@ -993,6 +1049,18 @@ class RxModule:
         req.icp = ICP(handle=req.handle, result=result)
         req.signal()
 
+        # The proxy or USB link is already gone. Finish the waiter locally.
+        # CANCEL_IO would write to that dead transport, and a following read
+        # in dispose() never returns.
+        if self._hardware_error or self._shutdown_requested:
+            self._write_queue.clear()
+            with self._protocol_lock:
+                self._drop_queued_request(req)
+                self._drop_sent_request(req)
+                if req.handle and self._req_pending.get(req.handle) is req:
+                    del self._req_pending[req.handle]
+            return
+
         with self._protocol_lock:
             if self._drop_queued_request(req):
                 return
@@ -1021,6 +1089,23 @@ class RxModule:
             self._enqueue_queued(item)
         return found
 
+    def _drop_sent_request(self, req: Request) -> bool:
+        """Remove ``req`` from the sent list. Caller holds ``_protocol_lock``."""
+        if self._tx_req_sent_size == 0:
+            return False
+        kept: list[Request] = []
+        found = False
+        while self._tx_req_sent_size > 0:
+            item = self._dequeue_sent()
+            if item is req:
+                found = True
+                continue
+            if item is not None:
+                kept.append(item)
+        for item in kept:
+            self._enqueue_sent(item)
+        return found
+
     def _sent_request_is(self, req: Request) -> bool:
         """Return whether ``req`` is still waiting for an IPP. Caller holds the lock."""
         if self._tx_req_sent_size == 0:
@@ -1042,7 +1127,7 @@ class RxModule:
         Never touches the serial port from the caller — writes are drained
         exclusively via ``await serial.write(...)`` on the event loop.
         """
-        if self._shutdown_requested:
+        if self._shutdown_requested or self._hardware_error:
             return
 
         packet = encode_irp(irp)
@@ -1054,26 +1139,27 @@ class RxModule:
     async def _flush_writes(self) -> bool:
         """Drain the outbound write queue. Returns False on I/O failure."""
         while True:
+            if self._shutdown_requested or self._hardware_error:
+                self._write_queue.clear()
+                return False
             with self._file_lock:
                 if not self._write_queue:
                     return True
                 packet = self._write_queue.popleft()
 
-            if not self._serial or self._shutdown_requested:
+            if not self._serial or self._shutdown_requested or self._hardware_error:
                 return False
 
             try:
                 if not self._serial.is_open:
                     _LOGGER.error("Serial port no longer valid (USB disconnected?)")
-                    if self._transition_to_error():
-                        self._notify_disconnect()
+                    self._fail_link()
                     return False
                 await self._serial.write(packet)
             except _SERIAL_ERRORS as e:
                 if not self._shutdown_requested:
                     _LOGGER.error("Serial error during write: %s", e)
-                    if self._transition_to_error():
-                        self._notify_disconnect()
+                    self._fail_link()
                 return False
 
     def _is_serial_port_valid(self) -> bool:
@@ -1097,8 +1183,7 @@ class RxModule:
                         _LOGGER.error(
                             "Serial port invalid - USB device may have been removed"
                         )
-                        if self._transition_to_error():
-                            self._notify_disconnect()
+                        self._fail_link()
                     break
 
                 # Drain outbound IRPs, then promote queued requests → more writes
@@ -1137,8 +1222,7 @@ class RxModule:
                     except _SERIAL_ERRORS as e:
                         if not self._shutdown_requested:
                             _LOGGER.warning("Serial handler read error: %s", e)
-                            if self._transition_to_error():
-                                self._notify_disconnect()
+                            self._fail_link()
                         break
                     finally:
                         read_task = None
@@ -1148,8 +1232,7 @@ class RxModule:
                             _LOGGER.error(
                                 "Serial EOF - USB device may have been removed"
                             )
-                            if self._transition_to_error():
-                                self._notify_disconnect()
+                            self._fail_link()
                         break
 
                     for byte in data:
@@ -1161,8 +1244,7 @@ class RxModule:
         except _SERIAL_ERRORS as e:
             if not self._shutdown_requested:
                 _LOGGER.warning("Serial handler error: %s", e)
-                if self._transition_to_error():
-                    self._notify_disconnect()
+                self._fail_link()
         finally:
             if read_task is not None and not read_task.done():
                 read_task.cancel()

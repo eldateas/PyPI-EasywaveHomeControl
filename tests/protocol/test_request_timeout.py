@@ -93,6 +93,85 @@ def test_cancelled_ew_rcv_ex_marks_unacknowledged_request() -> None:
     asyncio.run(run())
 
 
+def test_cancelled_ping_on_dead_link_does_not_write_or_read() -> None:
+    """A failed transport must not get CANCEL_IO or another read."""
+
+    async def run() -> None:
+        module = RxModule(port="/dev/ttyUSB_fake")
+        module._write_wakeup = asyncio.Event()
+        _accept_as_pending(module)
+
+        task = asyncio.create_task(module.ping(timeout=5.0))
+        for _ in range(50):
+            if module._req_pending:
+                break
+            await asyncio.sleep(0.01)
+        assert module._req_pending
+        module._write_queue.clear()
+        module._hardware_error = True
+        module._connected = False
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert module._req_pending == {}
+        assert list(module._write_queue) == []
+
+        read_calls = 0
+
+        class _DeadPort:
+            is_open = True
+
+            async def read(self, _n: int = -1) -> bytes:
+                nonlocal read_calls
+                read_calls += 1
+                return b""
+
+            async def write(self, _data: bytes) -> None:
+                raise AssertionError("write on dead link")
+
+            async def close(self) -> None:
+                self.is_open = False
+
+        module._serial = _DeadPort()  # type: ignore[assignment]
+        await module.dispose()
+        assert read_calls == 0
+
+    asyncio.run(run())
+
+
+def test_dispose_on_dead_link_does_not_wait_for_close() -> None:
+    async def run() -> None:
+        module = RxModule(port="/dev/ttyUSB_fake")
+        module._hardware_error = True
+        module._write_wakeup = asyncio.Event()
+
+        class _HangingPort:
+            is_open = True
+            aborted = False
+
+            def abort(self) -> None:
+                self.aborted = True
+
+            async def close(self) -> None:
+                await asyncio.Event().wait()
+
+            async def read(self, _n: int = -1) -> bytes:
+                raise AssertionError("read on dead link")
+
+            async def write(self, _data: bytes) -> None:
+                raise AssertionError("write on dead link")
+
+        port = _HangingPort()
+        module._serial = port  # type: ignore[assignment]
+        await asyncio.wait_for(module.dispose(), timeout=2.0)
+        assert port.aborted
+        assert module._serial is None
+
+    asyncio.run(run())
+
+
 def test_repeated_ew_rcv_ex_timeouts_do_not_fill_request_slots() -> None:
     async def run() -> None:
         module = RxModule(port="/dev/ttyUSB_fake")

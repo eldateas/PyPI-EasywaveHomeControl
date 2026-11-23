@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-11-23
+
+### Fixed
+- **Disconnect during `PING_RCV`** — when the serial link fails while a health
+  check is in flight, cancelling that request no longer writes `CANCEL_IO` or
+  reads the closed port. The request is finished locally (`ERR_CANCELED`), so
+  the gateway can report the disconnect instead of stalling the event loop.
+  A timeout or cancel on a link that is still up still sends `CANCEL_IO`.
+  Closing a dead port is aborted and bounded to one second, so `wait_closed()`
+  on an ESPHome proxy cannot hold the disconnect path.
+
 ## [0.4.2] - 2026-11-06
 
 ### Fixed
