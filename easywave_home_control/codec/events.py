@@ -35,6 +35,22 @@ class ButtonPushEvent:
     function: ButtonFunction
     should_ignore: bool
 
+    @property
+    def is_low_battery(self) -> bool:
+        """True when the button byte is the battery warning (``0x80``).
+
+        The wire byte has no button field. Parsing still reports button A,
+        and ``should_ignore`` stays false. This telegram is not a button
+        press. A low-battery indication is this push followed by a release;
+        that release is not a button release either.
+        """
+        return self.function == ButtonFunction.LOW_BATTERY
+
+    @property
+    def is_button_press(self) -> bool:
+        """True for a real button, false for learn-control and battery warnings."""
+        return not self.should_ignore and not self.is_low_battery
+
 
 @dataclass(frozen=True)
 class ButtonReleaseEvent:

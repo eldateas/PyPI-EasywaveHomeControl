@@ -4,6 +4,10 @@ Pure Python async/await implementation for controlling EASYWAVE radio modules (R
 
 Optimized for **Home Assistant integration** with a non-blocking async API and a **codec layer** for typed telegram/state parsing.
 
+## What's New in 0.4.4
+
+- **Transmitter battery** — a real press is push then release. Low battery is a later push `0x80` plus release: `battery_low` only, no second press or release. `TransmitterBatteryTracker` emits `battery_normal` after two later OK telegrams
+
 ## What's New in 0.4.3
 
 - **Disconnect during a health check** — a cancelled `PING_RCV` on an already dead link is finished locally, without `CANCEL_IO` or another read

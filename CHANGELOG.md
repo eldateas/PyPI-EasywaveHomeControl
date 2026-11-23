@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-11-23
+
+### Added
+- **Transmitter battery state** — `ButtonPushEvent.is_low_battery` /
+  `is_button_press`. Byte `0x80` stays button A with `should_ignore` false,
+  and is not a learnable button press. The warning is the pair push `0x80`
+  plus the following release; that release is not a button release.
+  `TransmitterBatteryTracker` keeps a warning until two later non-low
+  telegrams. A change is `TransmitterBatteryEvent` with `battery_low` or
+  `battery_normal`. `observe_push` ignores learn-control telegrams.
+
 ## [0.4.3] - 2026-11-23
 
 ### Fixed

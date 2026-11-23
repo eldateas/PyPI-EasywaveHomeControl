@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+from .battery import (
+    BATTERY_EVENT_LOW,
+    BATTERY_EVENT_NORMAL,
+    BATTERY_LOW,
+    BATTERY_OK,
+    BATTERY_RECOVERY_COUNT,
+    EVENT_BATTERY_LOW,
+    EVENT_BATTERY_NORMAL,
+    TransmitterBatteryEvent,
+    TransmitterBatteryTracker,
+)
 from .common import StateDirection, TimerDuration
 from .dispatch import encode_ewb_state, parse_ewb_state
 from .events import (
@@ -49,6 +60,13 @@ from .telegram import parse_ewb_rcv, parse_ewb_rcv_result, parse_ew_rcv_ex_resul
 from . import easywave, secwave
 
 __all__ = [
+    "BATTERY_EVENT_LOW",
+    "BATTERY_EVENT_NORMAL",
+    "BATTERY_LOW",
+    "BATTERY_OK",
+    "BATTERY_RECOVERY_COUNT",
+    "EVENT_BATTERY_LOW",
+    "EVENT_BATTERY_NORMAL",
     "ButtonFunction",
     "ButtonPushEvent",
     "ButtonReleaseEvent",
@@ -81,6 +99,8 @@ __all__ = [
     "SwitchPosition",
     "SwitchTimerState",
     "TimerDuration",
+    "TransmitterBatteryEvent",
+    "TransmitterBatteryTracker",
     "TransmitterLearnAbortEvent",
     "TransmitterLearnSuccessEvent",
     "TransmitterRemoveSuccessEvent",
